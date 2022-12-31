@@ -1,0 +1,1555 @@
+#!/bin/bash
+#=======================================================================#
+#==PROLOGUE sample toolscript
+#=======================================================================#
+
+#--- imslp
+# imslp: skeleton plus source for common functions for shell scripts
+#
+# Purpose is to provide standalone shell script utilities, so common functions
+# are injected as part of the script rather then sourced.
+#
+# Usage:
+#   imslp - common bash script functions
+#   imslp [common options] <imslpcommand> [command options]
+#
+# imslpcommand:
+#   imslp help
+#   imslp update <toolscript>
+# 
+# Common options:
+#   -v|--verbose : verbose
+#   -t|--trace : trace (verbose printing script-line number)
+#   -bw|--bw : no colors
+#   -a|--autoconfirm : selects default choices
+#   -noggc|--noggc : no use of GGC (if set defaults to GUTSH_NOGGC)
+#   -env=<file> : file to source
+#   -ggc=<ggc> : GGC selection to use
+#
+#   GUTSH_LOG=1 : log notice,verbose,warning,log to provided LOGFILE
+#   GUTSH_LOG=2 : like 1 plus notice to logger: (see journalctl --since today)
+# -
+# 
+# A toolscript should be like this imslp script, in which the following part
+# will be updated by the 'imslp update' command.
+# On USS such a toolscript is automatically restarted under bash if needed.
+#
+#  TAG="*<tool>*"
+#  #=======================================================================#
+#  #==CHECKSUM=
+#  #=======================================================================#
+#  #==BEGIN imslp injection part == do not alter
+#  #=======================================================================#
+#  <imslp content>
+#  #=======================================================================#
+#  #==END imslp injection part == do not alter
+#  #=======================================================================#
+#
+# The toolscript may use GGC.
+#
+# Example: 
+#    imslp help
+#---
+
+# use common functions
+# TAG is *<toolname in GGC>*
+TAG="*imslp*"
+#=======================================================================#
+#==CHECKSUM=52832
+#=======================================================================#
+#==BEGIN gutsh injection part == do not alter
+#=======================================================================#
+
+# in case were are on uss which cannot be tested here if in bash and this 
+# var is not yet set YAT-2806
+# YAT-2817:_BPXK_AUTOCVT=ALL mangles up stderr in tee construct
+export _BPXK_AUTOCVT=ON        # mmm _BPXK_AUTOCVT seems to be not exported, so set here
+# on USS, bash is via a wrapper
+if [ -z "$BASH" ]; then
+  # bash required 
+  export PATH="$PATH:$(dirname $0)"
+  bash "$0" "$@"
+  exit $?
+fi
+[ -z "$TAG" ] && echo "$TAG: ERROR 'TAG' is not set" && exit 1
+
+# on uss there is a substitue realpath in same dir as bash
+PATH="$PATH:$(dirname $BASH)"
+typeset THISSCRIPT=$(realpath "$0")
+typeset THISSCRIPTDIR="$(dirname ${THISSCRIPT})"
+PATH="$PATH:$THISSCRIPTDIR"
+typeset TOOLARGS="$@"
+typeset OPWD
+typeset UNAME
+typeset PLATFORM                                                                # linux cygwin mingw os390
+typeset DISTRO                                                                  # rhel8 cygwin os390
+typeset CROOT 
+typeset confirm_answer="";
+typeset opt_ac=0
+typeset opt_ac_force=""
+typeset opt_noggc=0
+typeset opt_ggc="";
+typeset opt_guts_platform="";
+[ ! -z "$GUTSH_NOGGC" ] && opt_noggc=$GUTSH_NOGGC
+typeset opt_verbose=0;
+typeset opt_trace=0;
+typeset opt_log=0;
+[ ! -z "$GUTSH_LOG" ] && opt_log=$GUTSH_LOG
+typeset opt_bw=0
+typeset USER
+typeset ERRORTAG="$TAG ERROR:"
+typeset WARNINGTAG="$TAG WARNING:"
+typeset NOTICETAG="$TAG NOTICE:"
+typeset VERBOSETAG="$TAG VERBOSE:"
+typeset OKTAG="$TAG OK:"
+typeset NOKTAG="$TAG NOT OK:"
+typeset XCHOSTFQ
+typeset -l LCHOST
+typeset -l LCHOSTFQ
+typeset -l LCUSER
+typeset UXBINDIR=""
+
+[ ! -d "${HOME}" ]  && echo "$TAG: no HOME dir" && exit 1
+[ ! -d "${TMP}" ]  && TMP=${TMPDIR}
+[ ! -d "${TMP}" ]  && TMP=${HOME}/tmp
+[ ! -d "${TMP}" ]  && mkdir -p ${TMP} 
+[ ! -d "${TMP}" ]  && echo "$TAG: no TMP=${TMP}" && exit 1
+export TMP
+typeset PLAINTAG=${TAG//\*/}
+LOGFILE=${TMP}/${PLAINTAG}_$$.log
+typeset -u SYSLOG_IDENTIFIER=$PLAINTAG
+CTMP="${TMP}/common"
+mkdir -p ${CTMP} 
+[ ! -d "${CTMP}" ] && echo "$TAG: no writable TMP dir ($CTMP)" && exit 1
+
+TAG="$COMMON_LOCATION$TAG"
+typeset SAVED_COMMON_ARGS="$COMMON_ARGS"        # possibly from caller's environment
+typeset COMMON_ARGS=""
+
+function common_init() {
+  typeset arg=$1
+  OPWD=$(pwd)
+
+  C_ESC=$'\E'
+  C_NORM=$'\E[0;39;49m'
+  C_TRC=$'\E[1;35;43m'
+  C_ERR=$'\E[1;37;41m'
+  C_WRN=$'\E[1;37;43m'
+  C_ASK=$'\E[1;30;42m'
+  C_DWN=$'\E[1;37;47m'
+  C__UP=$'\E[1;37;45m'
+  C_VER=$'\E[1;37;44m'
+  C_NOT=$'\E[1;36;44m'
+  C_OK=$'\E[1;37;42m'
+  C_OK_B=$'\E[30;42m' 
+  C_NOK=$'\E[1;37;41m'
+  if [ $opt_bw -ne 0 ]
+  then
+   C_NORM=
+   C_TRC=
+   C_ERR=
+   C_WRN=
+   C_ASK=
+   C_DWN=
+   C__UP=
+   C_VER=
+   C_NOT=
+   C_OK_B=
+   C_OK=
+   C_NOK=
+   # spread out --bw to TESTMORE 
+         TESTMORE_COLOR_OKBANNER=
+	 TESTMORE_COLOR_NOKBANNER=
+	 TESTMORE_COLOR_NORMAL=
+	 TESTMORE_COLOR_COMMENT=
+	 TESTMORE_COLOR_WARNING=
+  fi
+
+  ERRORTAG="$C_ERR${TAG}$C_NORM ERROR:"
+  WARNINGTAG="$C_WRN${TAG}$C_NORM WARNING:"
+  ASKTAG=$C_ASK${TAG}$C_NORM
+  STATUSDOWN=$C_DWN-down-$C_NORM
+  STATUSUP=$C__UP-up-$C_NORM
+  VERBOSETAG="$C_VER${TAG}$C_NORM"
+  NOTICETAG="$C_NOT${TAG}$C_NORM"
+  FMTTAG=$ASKTAG
+  OKTAG="$C_OK${TAG}$C_NORM OK"
+  NOKTAG="$C_NOK${TAG}$C_NORM NOT OK"
+
+  UNAME=$(uname)
+  echo "$UNAME" |grep -q MINGW
+  [ $? -eq 0 ]  && UNAME=MINGW
+  echo "$UNAME" |grep -q CYGWIN
+  [ $? -eq 0 ]  && UNAME=CYGWIN
+
+  if [ $UNAME = "Linux" ]                                                   # requires: yum install graphviz pandoc
+  then
+    PLATFORM=linux;
+    if [ -e /bin/hostname ] ; then                                          # mmm in some containers its not there
+      XCHOSTFQ=$(/bin/hostname -f)
+    elif [ -e /etc/hostname ]; then
+      XCHOSTFQ=$(cat /etc/hostname)
+    else
+      XCHOSTFQ=$(uname | awk '{print $2}') 
+    fi
+    
+  elif [ $UNAME = "CYGWIN" ]
+  then
+    PLATFORM=cygwin;
+    CROOT="/cygdrive/c"
+    UXBINDIR="/usr/bin/"
+    XCHOSTFQ=$(/bin/hostname -f)
+    export PATH="$UXBINDIR:$PATH"              # if in windows context, prefer cygwin utils
+  elif [ $UNAME = "MINGW" ]
+  then
+    PLATFORM=mingw;
+    CROOT="/c"
+    XCHOSTFQ=$(/bin/hostname -f)    # ?
+  elif [ $UNAME = "OS/390" ]
+  then
+    PLATFORM=os390;
+    XCHOSTFQ=$(/bin/hostname)       # ?
+  else
+    error "Sorry, the current platform ($UNAME) is not supported. "
+    doexit 1;
+  fi
+  LCHOSTFQ=$XCHOSTFQ
+  LCHOST=${XCHOSTFQ%%.*}
+
+  DISTRO=$PLATFORM
+  if [ $PLATFORM = linux ] ; then
+  	grep -q -i "REDHAT" /etc/os-release 2>/dev/null && DISTRO=rhel8
+  fi
+
+  [ -z "$GUTS_PLATFORM" ] && GUTS_PLATFORM=$PLATFORM
+
+  [ -z "$USER" ] && USER=$LOGNAME
+  [ -z "$USER" ] && USER=$USERNAME
+  [ -z "$USER" ] && USER=$(id -un)
+  [ -z "$USER" ] && error "no user name set" && return 1
+  LCUSER=$USER
+
+  if [ $opt_verbose -ne 0 ]; then
+    typeset MYTAG="${C__UP}*${C_NORM}"
+    typeset date=$(date "+%Y-%m-%d %H:%M:%S")
+    typeset line=$(center "started at $date" "$TAG" "=") 
+    echo "${C__UP}$line${C_NORM}"
+    line="${C_TRC} C_TRC ${C_ERR} C_ERR ${C_WRN} C_WRN ${C_ASK} C_ASK ${C_DWN} C_DWN ${C__UP} C__UP ${C_VER} C_VER ${C_NOT} C_NOT ${C_OK} C_OK ${C_NOK} C_NOK ${C_NOK} C_NOK ${C_NORM} C_NORM"
+    echo "$MYTAG${C__UP}$line${C_NORM}"
+    echo "$MYTAG  HOST=$XCHOSTFQ PID=$$ PPID=$PPID"
+    echo "$MYTAG  USER=$USER whoami=$(whoami)"
+    echo "$MYTAG  HOME=$HOME"
+    echo "$MYTAG  uname -a="$(uname -a)
+    echo "$MYTAG  PATH=$PATH"
+    echo "$MYTAG  GUTS_PLATFORM=$GUTS_PLATFORM"
+    echo "$MYTAG  GGC_HOME=$GGC_HOME"
+    echo "$MYTAG  GGC_WORLD=$GGC_WORLD"
+    typeset line=$(center "===")
+    echo "$MYTAG  SCRIPT=$(realpath $0)"
+    echo "$MYTAG  ARGS=${TOOLARGS}"
+    echo "${C__UP}$line${C_NORM}"
+  fi
+
+  # cleanup tmp stuff once a day
+  typeset mdate=$(date +"%Y%m%d")
+  if [ ! -f "${TMP}/${PLAINTAG}_${mdate}_cleanup" ] ; then
+    ${UXBINDIR}find ${TMP}/${PLAINTAG}_* -mtime +1 2>/dev/null | while read f ; do
+        chmod +w "$f" 2>/dev/null
+        rm -f "$f" 2>/dev/null
+    done
+    > "${TMP}/${PLAINTAG}_${mdate}_cleanup"
+  fi
+
+  if [ $opt_noggc -eq 0 ] ; then
+    import_ggc || return 1
+  fi
+  return 0
+}
+
+center() {
+        typeset txt="$1";
+        typeset border="$2";
+        [ -z "$border" ] && border="$TAG"
+        typeset padc="$3";
+        [ -z "$padc" ] && padc=" "
+        typeset maxl="$4";
+        [ -z "$maxl" ] && maxl=80
+    
+        typeset nctxt=$(echo "$txt" | sed 's/.\[[0-9;]*m//g')
+        typeset ncborder=$(echo "$border" | sed 's/.\[[0-9;]*m//g')
+
+        typeset nr=${#nctxt}
+        if [ $(( nr % 2 )) == 1 ]
+        then
+                txt="$txt$padc";            # make even sized
+                nr=$((nr + 1))
+        fi
+        typeset max=$(($maxl - 2 *${#ncborder}))
+        typeset nrpad=$(( ($max -$nr)/2 ))
+
+        pad=""
+        while [[ $nrpad -gt 0 ]]; do
+          pad="$pad$padc"
+          (( nrpad-- ))
+        done
+        echo "${border}${pad}${txt}${pad}${border}"
+}
+
+function import_ggc() {
+    [ ! $GGC_GITPROJ ] && GGC_GITPROJ="yat"
+    SYSLOG_IDENTIFIER=$GGC_GITPROJ;
+    [ -z "$GGC_HOME" -a -d "$HOME/GGC" ] && GGC_HOME="$HOME/GGC"
+    [ -z "$GGC_HOME" -a -d "$HOME/HOUSTON/${GGC_GITPROJ}-ggc-global" ] && GGC_HOME="$HOME/HOUSTON/${GGC_GITPROJ}-ggc-global"
+    [ ! -z "$GGC_HOME" ] && GGC_HOME=$(realpath "$GGC_HOME")
+
+    if [ -z "$GGC_HOME" ]; then
+        verbose "import_ggc: GGC_HOME is not set - skip"
+        return 0
+    fi
+    if [ ! -d "$GGC_HOME" ]; then
+        warning "import_ggc: GGC_HOME='$GGC_HOME' is not a directory - skip"
+        return 0
+    fi
+
+    unset GGC_WORLD_SELECTED
+    export GGC_HOME
+ 
+    verbose "import_ggc $GGC_WORLD : $GGC_HOME/ggc.pl sc -t $PLAINTAG  -bashvars -noverbose"
+    if [ ! -z "$PLAINTAG" ]; then
+           typeset ggcinfo
+           typeset rc
+           ggcinfo=`perl $GGC_HOME/ggc.pl sc -t $PLAINTAG -bashvars -noverbose`
+           rc=$?
+           if [ $rc -ne 0 ] ; then
+             error "perl $GGC_HOME/ggc.pl : $ggcinfo"
+             return 1
+           else
+	     ggcinfo=$(echo "$ggcinfo" | grep -v ^GGC:)
+             eval "$ggcinfo"
+           fi
+    fi
+    return 0
+}
+
+# returns 0 if common option processed - cannot shift
+function common_option() {
+  typeset opt="$1"
+
+  if [ "$1" = "-bw" -o "$1" = "--bw" ]
+  then
+      COMMON_ARGS="$COMMON_ARGS -bw"
+      opt_bw=1
+      return 0
+  elif [ "$1" = "-v" -o "$1" = "--verbose" ]
+  then
+      opt_verbose=$((opt_verbose + 1));
+      COMMON_ARGS="$COMMON_ARGS -v"
+      return 0
+  elif [ "$1" = "-nl" -o "$1" = "--nolog" ]
+  then
+      opt_log=0
+      COMMON_ARGS="$COMMON_ARGS --nolog"
+      return 0
+  elif [ "$1" = "-l" -o "$1" = "--log" ]
+  then
+      opt_log=$((opt_log + 1));
+      COMMON_ARGS="$COMMON_ARGS -l"
+      return 0
+  elif [ "$1" = "-t" -o "$1" = "--trace" ]
+  then
+      opt_verbose=$((opt_verbose + 1));
+      opt_trace=$((opt_trace + 1));
+      COMMON_ARGS="$COMMON_ARGS -t"
+      return 0
+  elif [ "$1" = "-a" -o "$1" = "--autoconfirm" ]
+  then
+      COMMON_ARGS="$COMMON_ARGS -a"
+      opt_ac=1;
+      return 0
+  elif [ "$1" = "-a-yes" ]
+  then
+      COMMON_ARGS="$COMMON_ARGS -a-yes"
+      opt_ac=1;
+      opt_ac_force="y";
+      return 0
+  elif [ "$1" = "-a-no" ]
+  then
+      COMMON_ARGS="$COMMON_ARGS -a-no"
+      opt_ac=1;
+      opt_ac_force="n";
+      return 0
+  elif [ "$1" = "-na" ]
+  then
+      COMMON_ARGS="$COMMON_ARGS -na"
+      opt_ac=0;
+      return 0
+  elif [ "$1" = "-noggc" -o "$1" = "--noggc" ]
+  then
+      COMMON_ARGS="$COMMON_ARGS -noggc"
+      opt_noggc=1;
+      return 0
+  elif [[ "$1" =~ "-env=" ]]
+  then
+      COMMON_ARGS="$COMMON_ARGS $1"
+      opt_env=$1;
+      opt_env=${opt_env#*=}
+      . $opt_env || exit 1
+      return 0
+  elif [[ "$1" =~ "-ggc=" ]]
+  then
+      COMMON_ARGS="$COMMON_ARGS $1"
+      opt_ggc=$1;
+      opt_ggc=${opt_ggc#*=}
+      export GGC_WORLD="$opt_ggc"
+      return 0
+  elif [[ "$1" =~ "-guts_platform=" ]]
+  then
+      opt_guts_platform=$1;
+      opt_guts_platform=${opt_guts_platform#*=}
+      export GUTS_PLATFORM="$opt_guts_platform"
+      return 0
+  elif [[ "$1" =~ "-?" ]]
+  then
+      usage;
+      exit 0;
+  fi
+  return 1
+}
+
+function stack {
+   STACK=""
+   local i message="${1:-""}"
+   local stack_size=${#FUNCNAME[@]}
+   # to avoid noise we start with 1 to skip the get_stack function
+   for (( i=1; i<$stack_size; i++ )); do
+      local func="${FUNCNAME[$i]}"
+      [ x$func = x ] && func=MAIN
+      local linen="${BASH_LINENO[$(( i - 1 ))]}"
+      local src="${BASH_SOURCE[$i]}"
+      [ x"$src" = x ] && src=non_file_source
+
+      STACK+=$'\n'"   at: "$func" "$src" "$linen
+   done
+   STACK="${message}${STACK}"
+   echo "$STACK"
+}
+
+# _trace used via verbose, so show caller of verbose()
+function _trace {
+  [ $opt_trace -eq 0 ] && return
+  echo "${C_TRC}$$-${BASH_SOURCE[2]}[${BASH_LINENO[1]}] ${FUNCNAME[2]}${C_NORM} : "
+}
+function trace {
+  [ $opt_trace -eq 0 ] && return
+  echo "$(_trace) $*"
+}
+# trace point quick & dirty
+function tp {
+  typeset a=$opt_trace
+  opt_trace=3
+  echo "$(_trace) $*"
+  opt_trace=$a
+}
+function verbose {
+  [ $opt_verbose -eq 0 -a  $opt_trace -eq 0 ] && return
+  logoutput verbose "$(_trace)$VERBOSETAG" "$*"
+}
+function verboselevel {
+  echo $opt_verbose
+}
+function verbose2 {
+  [ $opt_verbose -le 1 ] && return
+  logoutput verbose2 "$(_trace)$VERBOSETAG" "$*"
+}
+
+function notice {
+  logoutput notice "$(_trace)${NOTICETAG}" "$*"
+}
+
+function warning {
+  logoutput warning "$(_trace)${WARNINGTAG}" "$*"
+}
+
+function error {
+  logoutput error "$(_trace)${ERRORTAG}" "$*"
+}
+
+function ask {
+  typeset question="$1"
+  unset ASK_RESULT
+  if [[ ! "$question" =~ "$C_ESC" ]] ; then
+    question="$ASKTAG $question"
+  fi
+  echo -e "$question \c"
+  read ASK_RESULT
+}
+function askNoEcho {
+  typeset question="$1"
+  unset ASK_RESULT
+  if [[ ! "$question" =~ "$C_ESC" ]] ; then
+    question="$ASKTAG $question"
+  fi
+  OPS1="$PS1"
+  PS1=""
+  echo -n -e "$question \c" >&2
+  read -s ASK_RESULT
+  echo "" >&2
+  PS1="$OPS1"
+}
+
+# just log
+function log() {
+    logoutput log "" "$@"
+}
+function logoutput() {
+    # output from verbose/error/notice... to console, to logfile if in effect
+    typeset type=$1
+    shift
+    typeset prefix=""
+    [ ! -z "$1" ] && prefix="$1 "
+    shift
+    echo "$prefix$@"
+
+    if [ $opt_log -ge 1 ] ; then
+          echo "${TAG}-$type $@" >> "${LOGFILE}"
+          if [ "$opt_log" -gt 1 ] ; then
+
+            typeset prio
+            case $type in
+            error) prio=error;;
+            warning) prio=warning;;
+            *) prio=info;;
+            esac
+            typeset popt="-p"
+            [ $PLATFORM = os390 ] && popt="-P"
+            /bin/logger -t "$SYSLOG_IDENTIFIER" $popt "daemon.${prio}" "$@"
+          fi
+    fi
+}
+
+function usage() {
+ sed -n '/^# Usage:/,/^# -/p' "$THISSCRIPT"
+ return 0
+}
+
+#silent versions
+pushd () {
+      command pushd "$@" > /dev/null
+}
+popd () {
+    command popd "$@" > /dev/null
+}
+export pushd popd
+
+# like:
+# confirm "$ASKTAG: destructive cleanup containers and volumes for project: $project? [y]/n" "y"
+#[ ! "$confirm_answer" = "y" ] && echo "no action" && return 0
+
+function confirm() {
+  typeset question="$1"
+  typeset default="$2"
+
+  confirm_answer="";
+  if [[ ! "$question" =~ "$C_ESC" ]] ; then
+    question="$ASKTAG $question"
+  fi
+  echo -e "$question \c"
+  # add extra echo to make explicite : when used in calling hierarchy, tee-ing etc, al ways assume line-buffered output 
+  echo 
+
+  if [ $opt_ac -eq 1 ]
+  then
+    if [ ! -z "$opt_ac_force" ]; then
+      echo "${C_ASK}-!-${opt_ac_force}-!-${C_NORM}"
+      confirm_answer=$opt_ac_force;
+    else
+      echo "${C_ASK}--$default--${C_NORM}"
+      confirm_answer=$default
+    fi
+  else
+    read confirm_answer
+    [ -z "$confirm_answer" ] && confirm_answer=$default
+    [ "$confirm_answer" = "q" ] && echo "abort" && exit 1;
+  fi
+}
+
+function pause() {
+  [ ! -z "$1" ] && echo "$1"
+  echo "HIT ENTER TO CONTINUE"
+  typeset dummy
+  read dummy
+}
+
+function common_help() {
+ typeset topic="$1"
+
+ re="(all|ALL|-all|-ALL|--all|--ALL)"
+ [[ "$topic" =~ $re ]] && sed -n '/^#--- /,/^#---$/p' ${THISSCRIPT} && return 0
+
+ if [ "$topic" = "" ]; then
+   usage
+   echo 
+   topic=help
+ fi
+ #sed -n '/^#---.*'$topic'.*$/,/^#---$/{/^#--/!p;{/^#---$/q;}}' ${THISSCRIPT}
+ sed -n '/^#---.*'$topic'.*$/,/^#---$/p' ${THISSCRIPT} | grep -v "^#---"
+}
+
+function runcmd {
+  typeset rval
+  [ $opt_verbose -gt 1 ] && echo -e "$VERBOSETAG running: " $@ "... \c"
+  $@ 2>&1 > $CTMP/$$.out
+  rval=$?
+  [ ! -z "$RUNCMD_IGNORE" ] && rval=0   #ignore
+  RUNCMD_IGNORE=
+  [ $opt_verbose -gt 1 ] && [ $rval -eq 0 ] && echo "OK"
+  [ $opt_verbose -gt 1 ] && [ $rval -ne 0 ] && echo "FAIL"
+  [ $rval -ne 0 ] && verbose "running: $@ ... FAIL"
+  if [ $rval -ne 0 -o $opt_verbose -ge 2 ]
+  then
+      echo "runcmd: $@ --> rc=$rval"
+      cat $CTMP/$$.out
+  fi
+  rm $CTMP/$$.out
+  return $rval
+}
+
+function strip_xml_comment() {
+  typeset mute=0
+  typeset l
+  typeset ll
+  while read l ; do
+    #echo "IN: $l";
+    l=${l/<!--*-->/}
+    ll=${l/<!--*/}
+    if [ "$l" != "$ll" ] ; then
+      mute=1
+      l="$ll"
+    fi
+    ll=${l/*-->/}
+    if [ "$l" != "$ll" ] ; then
+      mute=0
+      l="$ll"
+    fi
+
+    [ $mute -eq 0 ] && echo "$l"
+  done
+}
+
+function common_get_contextroots() {
+  typeset seen=""
+  typeset in=$(realpath "$1")
+  typeset TMPD=$CTMP/$$.roots
+  rm -rf $TMPD || return 1
+  mkdir -p $TMPD || return 1
+  cd $TMPD || return 1
+  typeset RC
+  _common_get_contextroots "$in"
+  RC=$?
+  rm -rf $TMPD
+  return $RC
+}
+function _common_get_contextroots() {
+  verbose "common_get_contextroots $1"
+
+  typeset list
+  if [ -f "$1" ]; then
+    list="$1"
+  elif [ -d "$1" ]; then
+    list=`${UXBINDIR}find "$1" | grep -e "\.ear$" -e ".\war$"`
+  else 
+    error "cannot open '$1'"; return 1
+  fi
+  typeset OIFS=$IFS
+  typeset NIFS="
+"
+  typeset earre=".*\.ear$"
+  typeset warre=".*\.war$"
+  IFS=$NIFS
+  for file in $list; do
+    [ ! -f "$file" ] && continue      # skip like /expanded/omo.ear/...
+    IFS=$OIFS
+    if [[ $file =~ $earre ]]; then
+      common_get_contextroots_ear $file
+    elif [[ $file =~ $warre ]]; then
+      common_get_contextroots_war $file
+    fi
+    IFS=$NIFS
+  done
+  IFS="$OIFS"
+
+  return 0
+}
+function common_get_contextroots_ear() {
+  verbose "common_get_contextroots_ear $1"
+  typeset f="$1"
+  typeset bf=$(basename "$f")
+  verbose "take $bf"
+  f=$(realpath "$f")
+  runcmd jar -xvf "$f" META-INF/application.xml || return 1
+  if [ -f  META-INF/application.xml ]
+  then
+      x=`grep context-root META-INF/application.xml | strip_xml_comment | tr -d "\r"`
+      if [ $? -eq 0 ]
+      then
+          x=`echo "$x" |tr -d "\r"`
+          x=`echo "$x" | sed -e 's/^[^"]*"//'`
+          x=`echo "$x" | sed -e 's/".*//'`
+          x=`echo "$x" | sed -e 's/<[^>]*>//g'`
+          for xx in $x ; do
+            common_add_contextroot "$bf" "$xx" "$bf/META-INF/application.xml"
+          done
+      else
+          echo "NO context-root in META-INF/application.xml"
+      fi
+      typeset approles=`grep -e '<role-name>' META-INF/application.xml | awk -F '[<>]' '{print $3}'`
+      for approle in $approles ; do
+        common_add_approles "$bf" "$approle" "$bf/META-INF/application.xml"
+      done
+      rm -rf META-INF
+  else
+      echo "No META-INF/application.xml in $f"
+  fi
+}
+
+common_add_contextroot() {
+        typeset origin="$1"
+        typeset root="$2"
+        typeset comment="$3"
+        echo "contextroot:$origin:$root:$comment" 
+}
+common_add_approles() {
+        typeset origin="$1"
+        typeset approles="$2"
+        typeset comment="$3"
+        echo "approles:$origin:$approles:$comment" 
+}
+
+
+common_get_contextroots_war() {
+  typeset f="$1"
+  verbose "common_get_contextroots_war $1"
+  f=$(realpath "$f")
+  typeset bf=$(basename "$f")
+  #echo $f
+  runcmd jar -xvf "$f" WEB-INF/ibm-web-ext.xml
+  if [ -f  WEB-INF/ibm-web-ext.xml ]
+  then
+      x=`grep context-root WEB-INF/ibm-web-ext.xml| strip_xml_comment |  tr -d "\r"`
+      if [ $? -eq 0 ]
+      then
+          x=`echo "$x" | sed -e 's/^[^"]*"//'`
+          x=`echo "$x" | sed -e 's/".*//'`
+          x=`echo "$x" | sed -e 's/<[^>]*>//g'`
+          common_add_contextroot "$bf" "$x" "$bf/WEB-INF/ibm-web-ext.xml"
+      fi
+      rm -rf WEB-INF
+  else
+      x="${bf/.war/}"
+      common_add_contextroot "$bf" "/$x" "$bf - generated"
+  fi
+}
+
+urlencode() {
+    # urlencode <string>
+    old_lc_collate=$LC_COLLATE
+    LC_COLLATE=C
+    local length="${#1}"
+    for (( i = 0; i < length; i++ )); do
+        local c="${1:$i:1}"
+        case $c in
+            [a-zA-Z0-9.~_-]) printf '%s' "$c" ;;
+            *) printf '%%%02X' "'$c" ;;
+        esac
+    done
+    LC_COLLATE=$old_lc_collate
+}
+
+urldecode() {
+    # urldecode <string>
+    local url_encoded="${1//+/ }"
+    printf '%b' "${url_encoded//%/\\x}"
+}
+
+#=======================================================================#
+#==TestMore begin
+#=======================================================================#
+# NB: TestMore as a separate script is generated by gutsh 
+#
+#------------------------ DOXYWIZ BEGIN EXTERNAL FILE <TestMore> -------#
+##--- TestMore 
+#
+# Titel         :       TestMore functionset
+#
+# Description   :       This set contains shell-functions for use in
+#			testscripts, either in NoRegrets context or not. 
+#			This file must be sourced in the testscript to make
+#			the functions available.
+#
+#                       The functions are derived from the functionality of the
+#			Test::More perl module.
+#			
+#			TestMore uses variables in the current shell. This means
+#			that the testresults in subshells are not collected in the 
+#			calling shell. In some shell environments a while loop after
+#			a pipe implies such a subshell. Those constructs had better
+#			be written in a way that avoids subshells.
+#
+#                       TestMore was originally used as a single script. It has
+#                       been incorporated in gutsh as generic functionality.
+#                       'gutsh update TestMore' also exports it as a single file.
+#
+#                       NB: this TestMore is also used under z/OS USS shell, so
+#                       certain bash constructs must be avoided.
+#
+# function:
+#		- section <title>
+#		  Register the start of a number of tests.
+#  	        - diag <text>
+#	          Display diagnostic information on stderr, to be used in case of failure.
+#		- ok <condition> <description>
+#	  	  The <condition> is evaluated. If true, test <description> is registered 
+#		  as a success. If not, as a failure.
+#	        - summary <nr>
+#	          A list of 'section' titles is presented with the results of the belonging 
+#                 'ok'-functions, and details on the first <nr> of failures (default 1).
+#	          If <nr> is -1, all failures are listed.
+#               - nr_oks=$(oks)
+#	          The number of successfull 'ok'-function invocations is returned.
+#               - nr_notoks=$(notoks)
+#	          The number of unsuccessfull 'ok'-function invocations is returned.
+#	        - testmore_result 
+#                 return the testresult
+#	        - ok_manual <title> <instruction> <success criteria>
+#	          The user is presented with the instruction and the success criteria 
+#                 and is given the opportunity to enter whether the action is 
+#                 successful or not.
+#	        - testmore_reset 
+#                 reset internals as for first use
+# Example:
+#
+#       In a NoRegrets testscript:
+#
+#       . TestMore      
+#
+#       a=1
+#        
+#       title "testtitle"
+#
+#       section "test met a=1"
+#       ok "$a = 1" "a is 1"
+#       ok "$a -eq 1" "a is 1"
+#
+#       a=2
+#       section "test met a=2"
+#       ok "$a = 1" "a is 1"
+#       ok "$a -eq 1" "a is 1"
+#       ok true "is always ok"
+#       ok false "is always not ok"
+#       ok 0 "is always ok"
+#       ok 1 "is always not ok"
+#       ls
+#       ok "$? = 0" " ls ok "
+#
+#       [ $(notoks) != 0  ] && echo "OEPS"
+#       summary 3
+#       exit $(notoks)			# unix style 0 for success
+#
+##---
+#------------------------ DOXYWIZ END ----------------------------------#
+
+
+typeset tm_cnt                     # global count of tests
+typeset tm_section_ix              # global count of sections
+typeset tm_oks                     # global count of ok results
+typeset tm_not_oks                 # global count of not ok results
+# NB on USS shell : typeset is not equivalent to declare (as in bash) and typeset -a is not supported
+typeset tm_section_txt             # array, index is diag-section-number, value is diag text
+typeset tm_section_ok              # array, index is diag-section-number, value is count of ok results
+typeset tm_section_not_ok          # array, index is diag-section-number, value is count of not ok results
+typeset tm_section_not_ok_txt      # array, index is diag-section-number, value is first not ok text
+typeset isCygwin=0
+typeset tm_sum_title=""
+
+export TESTMORE_COLOR_OKBANNER=
+export TESTMORE_COLOR_NOKBANNER=
+export TESTMORE_COLOR_NORMAL=
+export TESTMORE_COLOR_COMMENT=
+export TESTMORE_COLOR_WARNING=
+
+testmore_reset() {
+    tm_cnt=0
+    tm_section_ix=0
+    tm_oks=0
+    tm_not_oks=0
+    tm_section_okcnt=0
+    tm_section_not_okcnt=0
+    tm_section_txt[$tm_section_ix]=""
+    tm_section_ok[$tm_section_ix]=0
+    tm_section_not_ok[$tm_section_ix]=0
+    tm_section_not_ok_txt[$tm_section_ix]=""
+    tm_sum_title=""
+
+
+    isCygwin=0
+    echo `uname`| grep -q CYGWIN
+    [ $? -eq 0 ] && isCygwin=1
+
+    #- tm_store_results (bug 33773)
+    #- tm_retrieve_results (bug 33773)
+    tm_retrieve_results () {
+      . $TM_RESULT_FILE
+      :
+    }
+    tm_store_results () {
+     :
+     set |grep "^tm_" | grep "=" > $TM_RESULT_FILE
+    }
+
+    _base=$(basename $0)
+    if [ -z "$TMP" ]
+    then
+        TMP=$HOME/tmp
+        if [ ! -d $TMP ]  
+        then
+          mkdir -p "$TMP"
+          chmod 700 "$TMP"
+        fi
+    fi
+    # cleanup
+    ${UXBINDIR}find ${TMP}/TestMore.* -mtime +1 2>/dev/null | while read f ; do
+	chmod +w "$f" 2>/dev/null
+	rm -f "$f" 2>/dev/null
+    done
+
+    OPWD=$(pwd)
+    cd "$TMP"
+    ls TestMore* 2>/dev/null | while read f ; do
+       pid=`echo $f | sed -e 's/.*\.//'`
+       ps -p $pid >/dev/null 2>&1
+       [ $? -ne 0 ] && rm $f 2>/dev/null
+    done
+    cd "$OPWD"
+
+    export TM_RESULT_FILE=${TMP}/TestMore.$_base.$$
+    rm -f $TM_RESULT_FILE 2>/dev/null
+    tm_store_results
+}
+
+#- tm_echo : internal function
+tm_echo()
+{
+	if [ ${SHELL%bash} = ${SHELL} ]
+	then
+		echo "$*"
+	else	# in bash
+		echo -e "$*"
+	fi
+}
+
+#- tm_defineColors : internal function
+tm_defineColors()
+{
+	[ -z "$TESTMORE_COLOR_SCHEME" ] && TESTMORE_COLOR_SCHEME=$GGC_COLOR_SCHEME
+	[ -z "$TESTMORE_COLOR_SCHEME" ] && TESTMORE_COLOR_SCHEME=$GUTS_TERM_COLOR_SCHEME
+	[ -z "$TESTMORE_COLOR_SCHEME" ] && TESTMORE_COLOR_SCHEME=$BTU_COLOR_SCHEME
+	[ -z "$TESTMORE_COLOR_SCHEME" ] && TESTMORE_COLOR_SCHEME=none
+
+      	case "$TESTMORE_COLOR_SCHEME" in
+      	none)						# No colors 
+	 TESTMORE_COLOR_OKBANNER=
+	 TESTMORE_COLOR_NOKBANNER=
+	 TESTMORE_COLOR_NORMAL=
+	 TESTMORE_COLOR_COMMENT=
+	 TESTMORE_COLOR_WARNING=
+         ;;
+
+      	dark)						# White chars, black background
+	 TESTMORE_COLOR_OKBANNER="[1;32;49m"		# Bright green
+	 TESTMORE_COLOR_NOKBANNER="[1;31;49m"
+	 TESTMORE_COLOR_NORMAL="[0;39;49m"
+	 TESTMORE_COLOR_COMMENT="[1;34;49m"
+	 TESTMORE_COLOR_WARNING="[1;37;45m"
+         ;;
+
+      	light)						# black chars white background
+	if [ $isCygwin = 1 ]				
+	then
+	 TESTMORE_COLOR_OKBANNER="[0;32;47m"		# on windows, not really white background
+	 TESTMORE_COLOR_NOKBANNER="[1;31;47m"
+	 TESTMORE_COLOR_NORMAL="[0;30;47m"
+	 TESTMORE_COLOR_COMMENT="[1;34;47m"
+	 TESTMORE_COLOR_WARNING="[1;37;45m"
+	else
+	 TESTMORE_COLOR_OKBANNER="[0;32;49m"
+	 TESTMORE_COLOR_NOKBANNER="[1;31;49m"
+	 TESTMORE_COLOR_NORMAL="[0;39;49m"
+	 TESTMORE_COLOR_COMMENT="[1;34;49m"
+	 TESTMORE_COLOR_WARNING="[1;37;45m"
+	fi
+	 ;;
+      	esac
+}
+
+#------------------------ DOXYWIZ BEGIN EXTERNAL FUNCTION <title> --#
+# function: 
+#	title : mark the start of a complete test
+# signature: 
+#	title <title>
+# description:
+#	The start of a test run is marked. It will be shown in the summary.
+#------------------------ DOXYWIZ END INTERNAL ----------------------------------------#
+title()
+{       typeset text="$1"
+        tm_echo
+        tm_echo "${TESTMORE_COLOR_COMMENT} ###-----------------------------------------------------------------------------${TESTMORE_COLOR_NORMAL}"
+        tm_echo "${TESTMORE_COLOR_COMMENT} ### $text${TESTMORE_COLOR_NORMAL}"
+        tm_echo "${TESTMORE_COLOR_COMMENT} ### ${TESTMORE_COLOR_NORMAL}"
+        tm_echo
+
+        tm_sum_title="$text"
+}
+
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <section> --#
+# function: 
+#	section : mark the start of a number of tests
+# signature: 
+#	section <title>
+# description:
+#	The start of a testsection is marked. It will be shown in the summary.
+#------------------------ DOXYWIZ END -------------------------------------------------#
+section()
+{       
+        tm_retrieve_results
+        typeset text="$1"
+        tm_echo
+        tm_echo "${TESTMORE_COLOR_COMMENT} ### $text${TESTMORE_COLOR_NORMAL}"
+        tm_echo
+
+        tm_section_ix=$((tm_section_ix + 1))
+        tm_section_txt[$tm_section_ix]="$text"
+        tm_section_ok[$tm_section_ix]=0
+        tm_section_not_ok[$tm_section_ix]=0
+        tm_section_not_ok_txt[$tm_section_ix]=""
+        tm_section_okcnt=0
+        tm_section_not_okcnt=0
+        tm_store_results
+}
+
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <diag> --#
+# function: 
+#	diag : display diagnostic information on stderr
+# signature: 
+#	diag <text>
+# description:
+#	Displays diagnostic information, to be used in a failure situation.
+#------------------------ DOXYWIZ END -------------------------------------------------#
+diag() 
+{       typeset text="$1"
+        tm_echo "$text" >&2
+}
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <ok> --#
+# function: 
+#	ok : perform a test
+# signature: 
+#	ok <condition> <description>
+# description:
+#	The <condition> is evaluated. 
+#	If the <condition> string contains [ "-] then it is evaluated using
+#-      eval "test <condition>"
+#-
+#	else it is evaluated using
+#-      eval "<condition>"
+#-
+#	If true, test <description> is registered as a 
+#	success. If not, as a failure.
+#
+#
+# returns: 
+#	0 for success, !=0 for failure.
+#------------------------ DOXYWIZ END -------------------------------------------------#
+ok()
+{
+        tm_retrieve_results
+        typeset test="$1"
+        typeset text="$2"
+        typeset x
+        typeset RC
+        tm_cnt=$((tm_cnt + 1))
+
+        if [ -z "$text" ]
+        then
+                test=1
+                text="malformed ok statement: ok '$1' '$2'"
+        fi
+
+	case "$test" in
+	0|true|TRUE) RC=0;;
+	1|false|FALSE) RC=1;;
+        *)
+		echo "$test" | egrep -q "[ \"-]"
+		if [ $? -eq 0 ]
+		then
+			#echo do eval
+			eval "test $test"
+			RC=$?
+		else
+			#echo do if
+			eval "$test"
+			if [ $? -eq 0 ]
+			then
+				RC=0
+			else
+				RC=1
+			fi
+		fi
+		;;
+	esac
+
+        TESTMORE_USE_COLOR=${TESTMORE_COLOR_COMMENT}
+        echo "$text" | grep -q -e WARNING -e TODO
+        [ $? -eq 0 ] && TESTMORE_USE_COLOR=${TESTMORE_COLOR_WARNING}
+
+        if [ ${RC} -eq 0 ]
+        then
+                message="${TESTMORE_COLOR_OKBANNER}ok${TESTMORE_COLOR_NORMAL} $tm_cnt - ${TESTMORE_USE_COLOR}$text${TESTMORE_COLOR_NORMAL}"
+                tm_echo "$message"
+                x=${tm_section_ok[$tm_section_ix]};
+                tm_section_ok[$tm_section_ix]=$((x + 1 ))
+                tm_oks=$((tm_oks + 1))
+        else
+                text=`echo "$text" | tr -d "\|\"\n"`
+                message="${TESTMORE_COLOR_NOKBANNER}not ok${TESTMORE_COLOR_NORMAL} $tm_cnt - ${TESTMORE_USE_COLOR}$text${TESTMORE_COLOR_NORMAL}"
+                tm_echo "$message"
+                # again, no colors
+                message="$tm_cnt $text"
+                x=${tm_section_not_ok[$tm_section_ix]};
+                tm_section_not_ok[$tm_section_ix]=$((x + 1 ))
+                tm_not_oks=$((tm_not_oks + 1))
+                if [ !  -z "${tm_section_not_ok_txt[$tm_section_ix]}" ]
+                then
+			x="${tm_section_not_ok_txt[$tm_section_ix]}"
+			message="$x|$message"
+                fi
+                tm_section_not_ok_txt[$tm_section_ix]="$message"
+        fi
+
+        tm_store_results
+
+        return $RC
+}
+
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <summary> --#
+# function: 
+#	summary : print a test result summary
+# signature: 
+#	summary <nr>
+# description:
+#	A list of 'section' titles is presented with the results of the belonging 
+#       'ok'-functions, and details on the first <nr> of failures (default 1).
+#	If <nr> is -1, all failures are listed.
+#
+# returns: 
+#	The number of failures, like 'notoks'. 0 for success.
+#------------------------ DOXYWIZ END -------------------------------------------------#
+summary()
+{
+        tm_retrieve_results # no change, so no store
+        typeset x
+        x=0
+	typeset cnt
+	cnt=$1
+	[ -z "$cnt" ] && cnt=1
+	
+
+        tm_echo
+        tm_echo "#~~----------------------------------------------------------------------------- "
+	typeset xtitle=""
+	[ ! -z "$tm_sum_title" ] && xtitle=": $tm_sum_title"
+        tm_echo "# test summary $xtitle"
+        tm_echo
+
+        typeset name
+        typeset oks
+        typeset noks
+        typeset total
+
+        while [ $x -le $tm_section_ix ]
+        do
+                name=${tm_section_txt[$x]}
+                oks=${tm_section_ok[$x]}
+                noks=${tm_section_not_ok[$x]}
+                total=$((oks+noks))
+
+		if [ -z "${name}" ]
+		then
+			[ $total -eq 0 ] && x=$((x + 1)) && continue		# skip first section only if empty bug 30572
+			name="tests"
+		fi
+
+                if [ $noks != 0 ]
+                then
+                        printf " ${TESTMORE_COLOR_COMMENT}# %-62s${TESTMORE_COLOR_NORMAL} : %d/%d ${TESTMORE_COLOR_NOKBANNER}not ok${TESTMORE_COLOR_NORMAL}\n" "$name" $noks $total
+                        echo "${tm_section_not_ok_txt[$x]}" | tr "|" "\n" |while read y
+			do
+				if [ $cnt -eq -1 -o $cnt -gt 0 ] 
+                                then
+                                    nr=`echo "$y" | sed -e 's/ .*//'`
+                                    txt=`echo "$y" | sed -e 's/^[^ ]* //'`
+                                    message="${TESTMORE_COLOR_NOKBANNER}not ok${TESTMORE_COLOR_NORMAL} $nr - ${TESTMORE_COLOR_COMMENT}$txt${TESTMORE_COLOR_NORMAL}"
+                                    printf " -- %s\n" "$message"
+                                fi
+				[ $cnt -gt 0 ] && cnt=$((cnt - 1))
+			done
+                else
+                        printf " ${TESTMORE_COLOR_COMMENT}# %-62s${TESTMORE_COLOR_NORMAL} : %d ${TESTMORE_COLOR_OKBANNER}ok${TESTMORE_COLOR_NORMAL}\n" "$name" $oks
+                fi
+
+                x=$((x + 1))
+        done
+
+        tm_echo "#~~----------------------------------------------------------------------------- "
+        return $tm_not_oks
+}
+
+# subsummary": returns nr errors since last subsummary call
+typeset sub_notoks=0
+subsummary() {
+    typeset rval=0
+    rval=$(( $(notoks) - sub_notoks ))
+    T_SUB_ERROR=$(notoks)
+    return $rval
+}
+
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <cnt> --#
+# function: 
+#	cnt : return the number of tests
+# signature: 
+#	nr_cnt=$(cnt)
+# description:
+#	The number of 'ok'-function invocations is returned.
+# returns: 
+#	number of calls
+#------------------------ DOXYWIZ END -------------------------------------------------#
+cnt()
+{
+        tm_retrieve_results # no change, so no store
+        tm_echo $tm_cnt
+        return $tm_cnt
+}
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <oks> --#
+# function: 
+#	oks : return the number of successes
+# signature: 
+#	nr_oks=$(oks)
+# description:
+#	The number of successfull 'ok'-function invocations is returned.
+# returns: 
+#	number of successes
+#------------------------ DOXYWIZ END -------------------------------------------------#
+oks()
+{
+        tm_retrieve_results # no change, so no store
+        tm_echo $tm_oks
+        return $tm_oks
+}
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <notoks> --#
+# function: 
+#	notoks : return the number of failures
+# signature: 
+#	nr_notoks=$(notoks)
+# description:
+#	The number of failed 'ok'-function invocations is returned.
+#	For testing TestMore itself, notoks(val) can be used to set this count.
+# returns: 
+#	number of failures
+#------------------------ DOXYWIZ END -------------------------------------------------#
+notoks()
+{
+        tm_retrieve_results # no change, so no store
+	if [ ! -z "$1" ] 
+	then 
+		tm_not_oks="$1"
+        	return $tm_not_oks
+	fi
+        tm_echo $tm_not_oks
+        return $tm_not_oks
+}
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <testmore_result> --#
+# function: 
+#	testmore_result : return the testresult
+# signature: 
+#	exit $(testmore_result)
+# description:
+#	The testresult is returned.
+# returns: 
+#	0 for success
+#------------------------ DOXYWIZ END -------------------------------------------------#
+testmore_result() 
+{	
+        tm_retrieve_results # no change, so no store
+        [ $tm_oks -eq 0 -o $tm_not_oks -ne 0 ] && return 1
+	return 0
+}
+
+
+#------------------------ DOXYWIZ BEGIN INTERNAL FUNCTION <ok_manual> -------#
+# function: 
+#	ok_manual : manage a manual action
+# signature: 
+#	ok_manual <title> <instruction> <success criteria>
+# description:
+#	The tester is presented with the instruction and the success criteria and is given 
+#	the opportunity to enter whether the action is successful or not.
+# returns: 
+#	0 for success
+#------------------------ DOXYWIZ END ---------------------------------------------#
+manual_cnt=0;
+ok_manual()
+{
+        tm_retrieve_results # no change, so no store
+	title="$1"
+	instruction="$2"
+	criteria="$3"
+
+	manual_cnt=$((manual_cnt + 1))
+
+	tm_echo "#### =========================================================================="
+	tm_echo "#### > manual action:"
+	tm_echo "#### >\t($manual_cnt) $title"
+	tm_echo "#### > instruction:"
+	echo "$instruction"  | while read l 
+	do
+		tm_echo "####\t$l"
+	done
+	tm_echo "#### > successful if:"
+	echo "$criteria"  | while read l 
+	do
+        	tm_echo "####\t$l"
+	done
+	tm_echo "#### =========================================================================="
+	tm_echo "#### > BEGIN   : " $(date +"%Y-%m-%d;%H:%M:%S")
+
+	loop=1
+	comment=
+	while [ $loop -eq 1 ] 
+	do
+		tm_echo "#### > success (y/n/c/q/?) :"
+		read answer
+		case "$answer" in
+		"q" ) 
+			echo "\n\n\n"
+			tm_echo "#### =========================================================================="
+			tm_echo "#### > ABORT   : " $(date +"%Y-%m-%d;%H:%M:%S")
+			tm_echo "#### =========================================================================="
+			echo "\n\n\n"	
+			exit 1;
+			;;
+		"y" ) 
+			tm_echo "#### > END     : " $(date +"%Y-%m-%d;%H:%M:%S") " : YES"
+			result=0
+			loop=0
+			;;
+		"n" ) 
+			tm_echo "#### > END     : " $(date +"%Y-%m-%d;%H:%M:%S") " : NO"
+			result=1
+			loop=0
+			;;
+		"" ) 
+			;;
+		"c")
+			while true
+			do 
+				read answer
+				if [ "$answer" = "" ] 
+				then
+					break
+				fi
+				[ ! -z "$comment" ] && comment="$comment\n"
+				comment="$comment$answer"
+			done
+			echo "$comment" | while read l
+			do	
+				tm_echo "#### > COMMENT: $l"
+			done
+			;;
+		* )
+			tm_echo "#### enter y (for yes), n (for no), q (for quit) or c (for comment, end with empty line)"
+			;;
+		esac
+	done
+	tm_echo "#### =========================================================================="
+	echo "\n"	
+	echo ok "$result" "$title"
+	ok "$result -eq 0" "$title"		# unix style 0=success
+        tm_store_results 
+	return $result
+}
+
+# on load: set colorscheme
+tm_defineColors
+## on first load - reset
+testmore_reset 
+
+# for doc generation
+#[ "$1" = "help" ] && sed -n '/^#--- /,/^#---$/p' $0 
+
+#=======================================================================#
+#==TestMore end
+#=======================================================================#
+
+# process COMMON_ARGS from callers environment (so -bw and -b spread out)
+typeset co
+for co in $SAVED_COMMON_ARGS ; do
+  common_option $co
+done
+
+#=======================================================================#
+#==END gutsh injection part == do not alter
+#=======================================================================#
+
+#=======================================================================#
+#==EPILOGUE sample toolscript
+#=======================================================================#
+
+#==MAIN==
+#-------------------------------------------------------------------------#
+#--- help ?
+# imslp help [--all|imslp|<command>]
+#   Display help information.
+#   Prints info between '#---<space>[topic]$" and "#---" markers.
+#   Display help information.
+#---
+#-------------------------------------------------------------------------#
+function cmd_help() {
+ common_help "$@"
+ return $?
+}
+
+#-------------------------------------------------------------------------#
+#--- 2pdf 
+# imslp 2pdf [-rotate <degrees>] [<dir>]
+#   Convert .jpg/.png images in <dir> to pdf named <dir>.pdf, in alfabetical order.
+#   Convert to grayscale.
+#   Optional rotation.
+#---
+#-------------------------------------------------------------------------#
+function cmd_2pdf() {
+  typeset rotate=""
+  typeset dir=""
+  while [ "${1:0:1}" = "-" -o "${1:0:1}" = "+" ] ; do
+    if [ "$1" = "-rotate" ] ; then
+      rotate="$2" 
+      shift 
+      shift
+      continue
+    fi
+    error "unknown option '$1'" && return 1;
+  done
+  if [ ! -z "$1" ]; then
+    dir="$1" 
+  else
+    dir=$(pwd)
+  fi
+  [ ! -d "$dir" ] && error "not a dir: '$dir'" && return 1;
+  dir=$(realpath "$dir");
+  name=$(basename "$dir");
+  pdf=$(realpath "./$name.pdf");
+
+  cd "$dir" 
+  images=$(ls *.jpg *.png 2>/dev/null)
+
+  [ -z "$images" ] && error "no .jpg or .png found in: '$dir'" && return 1;
+  images=$(echo $images)
+
+  rm -rf .imslp || return 1
+  mkdir .imslp || return 1
+  printf " . $dir\n" 
+
+  for i in $images ; do
+    notice "$i" 
+    cmd="convert" 
+    cmd="$cmd $i" 
+    if [ ! -z "$rotate" ] ; then
+      cmd="$cmd -rotate $rotate $i" 
+    fi
+    #cmd="$cmd -grayscale Rec709Luminance" 
+    cmd="$cmd -grayscale Rec709Luma" 
+    cmd="$cmd .imslp/$i" 
+    pwd
+    notice "$cmd" 
+    eval "$cmd" 
+    [ $? -ne 0 ] && error "oeps..."  && return 1 
+  done
+
+  cd .imslp
+  cmd="convert $images $pdf" 
+  notice "$cmd" 
+  eval "$cmd" 
+  [ $? -ne 0 ] && error "oeps..."  && return 1 
+
+  return 0
+}
+
+
+#========================================
+doexit() {
+  typeset r=$1
+  [ -d "$OPWD" ] && \cd "$OPWD"
+  exit $r 
+}
+function doinit() {
+  common_init || return 1
+  return 0
+}
+
+function imslpMain() {
+  typeset arg=$1
+  shift
+
+  rval=0;
+  case $arg in
+  help|-help|--help)    cmd_help "$@"; rval=$? ;;
+  2pdf)                 cmd_2pdf "$@"; rval=$? ;;
+  *) 
+    if [ -z "$arg" ]; then
+      usage;
+      rval=1;
+    else
+      error "unknown command: '$arg'"
+      rval=1;
+    fi
+    ;;
+  esac
+  return $rval
+}
+
+#========================================
+## main
+
+while [ "${1:0:1}" = "-" ]
+do
+
+    # -a|--autoconfirm -v|--verbose -bw|--bw
+    common_option "$1"
+    if [ $? -eq 0 ] ; then
+       shift 
+       continue;
+    fi
+    error "unknown common option: $1" && usage && exit 1
+done
+
+doinit 
+verbose "imslpMain $@"
+imslpMain "$@"
+
+doexit $?
+
+
