@@ -4,7 +4,7 @@
 #=======================================================================#
 
 #--- i2p
-# i2p: image manipulation and pdf creation
+# i2p: image to pdf (wrapper for linux imagequick)
 #
 # Usage:
 #   i2p - common bash script functions
@@ -13,8 +13,10 @@
 # i2pcommand:
 #   help
 #   erase             # remove prepared images and pdf
-#   prep              # prepare: rotate, grayscale
+#   prep              # prepare: rotate, grayscale, resize
+#                       predefined in .i2p_prep
 #   2pdf              # convert *.jpg *.png to pdf
+#   all               # erase,prep,2pdf
 # 
 # Common options:
 #   -v|--verbose : verbose
@@ -24,16 +26,10 @@
 #   -noggc|--noggc : no use of GGC (if set defaults to GUTSH_NOGGC)
 #   -env=<file> : file to source
 #   -ggc=<ggc> : GGC selection to use
-#
-#   GUTSH_LOG=1 : log notice,verbose,warning,log to provided LOGFILE
-#   GUTSH_LOG=2 : like 1 plus notice to logger: (see journalctl --since today)
 # -
 #   Common conversions and pdf creation. 
 #   Use case: smartphone photos to IMSLP pdf upload.
 # 
-#   To change pdf properties, use 
-#    exiftool
-#
 # Example: 
 #    i2p help
 #---
