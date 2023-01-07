@@ -7,12 +7,19 @@
 # zef - create zefania bible xml file 
 #     https://sourceforge.net/projects/zefania-sharp/files/Bibles/
 #
+#     developed,tested on UBUNTU, required tools:
+#      wget nslookup
+#
+# DISCLAIMER: this tool can be used to extract bible-data from websites.
+#     You must obey to the copyright and licensing rules that apply to that data.
+#     This tool in no way gives any right for storing or using that data.
+#
 # Usage:
 #   zef [common options] <zefcommand> [command options]
 #
 # zefcommand:
 #   zef help
-#   zef nbg
+#   zef nbg               # extract from nbg website
 #
 # Common options:
 #   -v|--verbose : verbose
@@ -33,6 +40,10 @@
 # use common functions
 # TAG is *<toolname in GGC>*
 my $TAG="*zef*";
+my $nbghost="debijbel.nl";
+my $nbgip;
+my $nbgurl;
+my @GETheader;
 
 #=======================================================================#
 #==gutspl=CHECKSUM=29149
@@ -628,18 +639,92 @@ sub cmd_help {
 }
 #-------------------------------------------------------------------------#
 #--- nbg
-# zef nbg 
+# zef nbg <bible>
+#    extracts the <bible>
+#
+#    The zef.GET.header file can be created by 
+#    - in een browser, access https://debijbel.nl/bijbel/BGT/
+#    - in browser webdevelopment tools, find the GET request, copy the request header
+#
+# example:
+#    zef nbg NBV
 #---
 #-------------------------------------------------------------------------#
-sub cmd_zef {
+sub cmd_nbg {
+  my @args=@_;
+  my $reset=0;
+  my $bible;
+
+  while ($args[0] =~ /^-/) {
+    if ( $args[0] eq "-reset" ) {
+        $reset=1;
+        shift @args;
+    } else {
+      error("unknown option: $args[0]");
+      return 1;
+    }
+  }
+  if ( $args[0] ) { $bible=$args[0]; shift @args; }
+  if ( $args[0] ) { error("unknown option: $args[0]" ); return 1; }
+  if ( ! $bible ) { error("no bible specified"); return 1; }
+  
   my $rval=0;
- return $rval
+  my $zeffy="zefania.$bible.xml";
+  my $header="zef.GET.header";
+  notice ("get bible: $bible -> $zeffy");
+  if ($reset) {
+    if ( -f $zeffy ) { unlink($zeffy); }
+  }
+  if ( -f $zeffy ) {
+    notice "Zefania bible: $zeffy already exists";
+    return 0;
+  }
+  if ( ! -f $header ) {
+    error("no file: $header"); return 1;
+  } else {
+    verbose( "using $header");
+  }
+  if ( ! open(HEADER,$header) ) { error "cannot open $header: $!\n"; }
+  @GETheader=<HEADER>;
+  close HEADER;
+
+  wget_cmd ( "$nbgurl/bijbel/$bible", "$bible.start.html"  );
+  
+  if ( -f $zeffy ) {
+    print "${C_OK}OK${C_NORM}\n" ;
+  } else {
+    print "${C_NOK}NOT OK${C_NORM}\n" ;
+  }
+  return $rval;
+}
+
+sub wget_cmd {
+  my ($url,$ofile)=@_;
+
+  my $cmd;
+  $cmd="wget --no-check-certificate -O $ofile" ;
+  for my $h (@GETheader) {
+    if ($h =~ /^GET/) { next; }
+    chomp $h;
+    $cmd .= " --header '$h'";
+  }
+  $cmd.=" $url" ;
+  notice( "cmd: $cmd");
+  system("$cmd");
 }
 
 sub doinit() {
   if (common_init() != 0) {
       doexit(1);
   };
+
+  my $cmd="nslookup $nbghost | grep ^Address | awk '{print \$2}' | grep -v -e \"#\" -e :";
+  verbose "$cmd" ;
+  $nbgip=`$cmd`;
+  if ( ! $nbgip ) { error("cannot get ip for $nbghost"); doexit(1);}
+  $nbgip =~ s/[\r\n]//g;
+  $nbgurl="https://$nbgip";
+  return 0;
 }
 sub doexit($) {
   exit(1);
@@ -650,8 +735,7 @@ sub zefMain {
       my $cmd= $ARGV[0]; 
       shift @ARGV;
       if ( $cmd eq "help" ) { return cmd_help( @ARGV ); 
-      } elsif ( $cmd eq "netrc" ) { return cmd_netrc( @ARGV ); 
-      } elsif ( $cmd eq "update" ) { return cmd_update( @ARGV ); 
+      } elsif ( $cmd eq "nbg" ) { return cmd_nbg( @ARGV ); 
       } else { error("unknown command '$cmd'"); return(1); 
       }
   }
