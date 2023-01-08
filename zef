@@ -45,6 +45,9 @@ my $nbgip;
 my $nbgurl;
 my @GETheader;
 
+# bookTLA#maxchapter
+my @books=qw(GEN#1 EXO#3);
+
 #=======================================================================#
 #==gutspl=CHECKSUM=29149
 #=======================================================================#
@@ -669,14 +672,15 @@ sub cmd_nbg {
   if ( ! $bible ) { error("no bible specified"); return 1; }
   
   my $rval=0;
-  my $zeffy="zefania.$bible.xml";
+  my $zefbible="zefania.$bible.xml";
+
   my $header="zef.GET.header";
-  notice ("get bible: $bible -> $zeffy");
+  notice ("get bible: $bible -> $zefbible");
   if ($reset) {
-    if ( -f $zeffy ) { unlink($zeffy); }
+    if ( -f $zefbible ) { unlink($zefbible); }
   }
-  if ( -f $zeffy ) {
-    notice "Zefania bible: $zeffy already exists";
+  if ( -f $zefbible ) {
+    notice "Zefania bible: $zefbible already exists";
     return 0;
   }
   if ( ! -f $header ) {
@@ -688,9 +692,27 @@ sub cmd_nbg {
   @GETheader=<HEADER>;
   close HEADER;
 
-  wget_cmd ( "$nbgurl/bijbel/$bible", "$bible.start.html"  );
+
+  for my $books (@books) {
+    my $chap=0;
+    my $book=$books; $book =~ s/#.*//;
+    my $max=$books; $max =~ s/.*#//;
+    while ( $chap < $max ) {
+      $chap++;
+      my $zefbook="zefania.$bible.$book.$chap.html";
+      if ($reset) {
+        if ( -f $zefbook ) { unlink($zefbook); }
+      }
+      if ( -f $zefbook ) {
+        notice "$zefbook already exists" ;
+      } else {
+        wget_cmd ( "$nbgurl/bijbel/$bible/$book.$chap", "$zefbook"  );
+      }
+      notice( "file://" . realpath($zefbook));
+    }
+  }
   
-  if ( -f $zeffy ) {
+  if ( -f $zefbible ) {
     print "${C_OK}OK${C_NORM}\n" ;
   } else {
     print "${C_NOK}NOT OK${C_NORM}\n" ;
@@ -703,14 +725,19 @@ sub wget_cmd {
 
   my $cmd;
   $cmd="wget --no-check-certificate -O $ofile" ;
+  $cmd.=" --compression=gzip" ;
   for my $h (@GETheader) {
     if ($h =~ /^GET/) { next; }
     chomp $h;
+    if ($h =~ /^$/) { next; }
     $cmd .= " --header '$h'";
   }
   $cmd.=" $url" ;
   notice( "cmd: $cmd");
   system("$cmd");
+  if ($? != 0) { return 1; }
+
+  return 0;
 }
 
 sub doinit() {
