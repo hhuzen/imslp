@@ -3,6 +3,11 @@
 #==PROLOGUE sample toolscript
 #=======================================================================#
 
+
+use XML::LibXML;
+# sudo apt-get install zlib1g-dev libxml2-dev
+# sudo cpan install XML::LibXML
+
 #--- zef
 # zef - create zefania bible xml file 
 #     https://sourceforge.net/projects/zefania-sharp/files/Bibles/
@@ -46,7 +51,9 @@ my $nbgurl;
 my @GETheader;
 
 # bookTLA#maxchapter
-my @books=qw(GEN#1 EXO#3);
+my @books=qw(
+GEN:Genesis:1
+);
 
 #=======================================================================#
 #==gutspl=CHECKSUM=29149
@@ -695,8 +702,9 @@ sub cmd_nbg {
 
   for my $books (@books) {
     my $chap=0;
-    my $book=$books; $book =~ s/#.*//;
-    my $max=$books; $max =~ s/.*#//;
+    my $book=$books; $book =~ s/:.*//;
+    my $bookname=$books; $bookname =~ s/^[^:]*://; $bookname=~ s/:.*//;
+    my $max=$books; $max =~ s/.*://;
     while ( $chap < $max ) {
       $chap++;
       my $zefbook="zefania.$bible.$book.$chap.html";
@@ -709,6 +717,8 @@ sub cmd_nbg {
         wget_cmd ( "$nbgurl/bijbel/$bible/$book.$chap", "$zefbook"  );
       }
       notice( "file://" . realpath($zefbook));
+
+      if ( parse_file($bookname, $chap, $zefbook) != 0 ) { return 1;};
     }
   }
   
@@ -753,6 +763,47 @@ sub doinit() {
   $nbgurl="https://$nbgip";
   return 0;
 }
+sub parse_file {
+  my ($bookname, $chap, $html)=@_;
+
+  notice "parse $html" ;
+
+  if ( ! open( HTML, "$html" ) ){  error "cannot open $html"; return 1; }
+  if ( ! open( XHTML, ">X-$html" ) ){  error "cannot open X-$html"; return 1; }
+
+  my $stage=0;
+  my $nextstage=0;
+  while (my $line = <HTML> ){
+      if ($stage == 0) {
+        if ($line =~ /<app-bible-passage/) {
+          $stage=1;
+          $line =~ s/.*<app-bible-passage/<app-bible-passage/;
+        }
+      }
+      if ($stage == 1) {
+        if ($line =~ /<\/app-bible-passage/) {
+          $line =~ s/<\/app-bible-passage.*/<\/app-bible-passage>/;
+          $nextstage=0;
+        }
+      }
+      if ($stage == 1) {
+        print XHTML $line;
+        $stage=$nextstage;
+      }
+  }
+  close HTML;
+  close XHTML;
+
+  my $dom = XML::LibXML->load_xml(location => "X-$html" );
+
+  print "$bookname-$chap\n" ;
+  foreach my $node ($dom->findnodes('//h2')) {
+    print " HH ".  $node->to_literal() . " \n" ;
+    foreach my ($dom->findnodes('//h2')) {
+  }
+}
+
+
 sub doexit($) {
   exit(1);
 }
