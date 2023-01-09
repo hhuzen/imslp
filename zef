@@ -49,6 +49,7 @@ my $nbghost="debijbel.nl";
 my $nbgip;
 my $nbgurl;
 my @GETheader;
+my @Template;
 
 # bookTLA#maxchapter
 my @books=qw(
@@ -677,19 +678,13 @@ sub cmd_nbg {
   if ( $args[0] ) { $bible=$args[0]; shift @args; }
   if ( $args[0] ) { error("unknown option: $args[0]" ); return 1; }
   if ( ! $bible ) { error("no bible specified"); return 1; }
-  
-  my $rval=0;
-  my $zefbible="zefania.$bible.xml";
+  my $zefdir="zef.$bible" ;
+  my $topdir=getcwd();
+  my $header="$topdir/zef.GET.header";
+  my $template="$topdir/zef.$bible.TEMPLATE.xml";
+  my $zefbible="$topdir/zef.$bible.xml";
+  if ( -f $zefbible ) { unlink $zefbible; }
 
-  my $header="zef.GET.header";
-  notice ("get bible: $bible -> $zefbible");
-  if ($reset) {
-    if ( -f $zefbible ) { unlink($zefbible); }
-  }
-  if ( -f $zefbible ) {
-    notice "Zefania bible: $zefbible already exists";
-    return 0;
-  }
   if ( ! -f $header ) {
     error("no file: $header"); return 1;
   } else {
@@ -699,18 +694,51 @@ sub cmd_nbg {
   @GETheader=<HEADER>;
   close HEADER;
 
+  if ( ! -f $template ) {
+    error("no file: $template"); return 1;
+  } else {
+    verbose( "using $template");
+  }
+  if ( ! open(TEMPLATE,$template) ) { error "cannot open $template $!\n"; }
+  @Template=<TEMPLATE>;
+  close TEMPLATE;
 
+  if ($reset) {
+    if ( -d $zefdir ) {
+      rmtree($zefdir) || return 1; 
+    }
+  }
+  if ( ! -d $zefdir ) {
+    mkdir($zefdir) || return 1;
+  }
+  chdir($zefdir) || return 1;
+  notice "in $zefdir";
+  
+  my $rval=0;
+  notice ("get bible: $bible -> $zefbible");
+  if ( -f $zefbible ) {
+    notice "Zefania bible: $zefbible already exists";
+    return 0;
+  }
+
+  if ( ! open( XML, ">:encoding(UTF-8)","$zefbible" ) ){  error "cannot open $zefbible"; return 1; }
+
+  print XML @Template;
+
+  my $booknr=0;
   for my $books (@books) {
+    $booknr++;
     my $chap=0;
     my $book=$books; $book =~ s/:.*//;
     my $bookname=$books; $bookname =~ s/^[^:]*://; $bookname=~ s/:.*//;
     my $max=$books; $max =~ s/.*://;
+    print XML "  <BIBLEBOOK bnumber=\"$booknr\" bname=\"$booknr $book\" bsname=\"$booknr$book\">\n";
+
     while ( $chap < $max ) {
       $chap++;
-      my $zefbook="zefania.$bible.$book.$chap.html";
-      if ($reset) {
-        if ( -f $zefbook ) { unlink($zefbook); }
-      }
+      print XML "   <CHAPTER cnumber=\"$chap\">\n" ;
+
+      my $zefbook="$bible.$book.$chap.html";
       if ( -f $zefbook ) {
         notice "$zefbook already exists" ;
       } else {
@@ -718,9 +746,13 @@ sub cmd_nbg {
       }
       notice( "file://" . realpath($zefbook));
 
-      if ( parse_file($bookname, $chap, $zefbook) != 0 ) { return 1;};
+      if ( process_file($bookname, $chap, $zefbook, $zefbible) != 0 ) { return 1;};
+      print XML "   </CHAPTER>\n" ;
     }
+    print XML "  </BIBLEBOOK>\n";
   }
+  print XML "</XMLBIBLE>\n";
+  close XML;
   
   if ( -f $zefbible ) {
     print "${C_OK}OK${C_NORM}\n" ;
@@ -763,17 +795,19 @@ sub doinit() {
   $nbgurl="https://$nbgip";
   return 0;
 }
-sub parse_file {
+sub process_file {
   my ($bookname, $chap, $html)=@_;
+  notice "process $html" ;
 
-  notice "parse $html" ;
+  my $xhtml="X-$html";
+  if ( ! -f $xhtml ) {
+    if ( ! open( HTML, "$html" ) ){  error "cannot open $html"; return 1; }
+    if ( ! open( XHTML, ">$xhtml" ) ){  error "cannot open $xhtml"; return 1; }
 
-  if ( ! open( HTML, "$html" ) ){  error "cannot open $html"; return 1; }
-  if ( ! open( XHTML, ">X-$html" ) ){  error "cannot open X-$html"; return 1; }
-
-  my $stage=0;
-  my $nextstage=0;
-  while (my $line = <HTML> ){
+    my $stage=0;
+    my $nextstage=0;
+    print XHTML "<html><body>";
+    while (my $line = <HTML> ){
       if ($stage == 0) {
         if ($line =~ /<app-bible-passage/) {
           $stage=1;
@@ -790,16 +824,30 @@ sub parse_file {
         print XHTML $line;
         $stage=$nextstage;
       }
+    }
+    print XHTML "</body></html>";
+    close HTML;
+    close XHTML;
   }
-  close HTML;
-  close XHTML;
 
-  my $dom = XML::LibXML->load_xml(location => "X-$html" );
+  my $dom = XML::LibXML->load_xml(location => "$xhtml" );
 
-  print "$bookname-$chap\n" ;
-  foreach my $node ($dom->findnodes('//h2')) {
-    print " HH ".  $node->to_literal() . " \n" ;
-    foreach my ($dom->findnodes('//h2')) {
+
+  foreach my $passage ($dom->findnodes('//app-bible-passage')) {
+      my @attrs=$passage->attributes();
+      foreach my $attr (@attrs) {
+        next if ( $attr !~ /^ *data-chapter-string/ );
+        my $v=$attr; $v=~ s/.*="//g; $v=~ s/"//g;
+      }
+      foreach my $span ($passage->findnodes('//span')) {
+        my @attrs=$span->attributes();
+        foreach my $attr (@attrs) {
+          next if ( $attr !~ /^ *data-verse-org-id/ );
+          my $v=$attr; $v=~ s/.*="//g; $v=~ s/"//g;
+          $v=~ s/.*\.//;
+          print XML "<VERS vnumber=\"$v\">". $span->to_literal()."</VERS>\n";
+        }
+      }
   }
 }
 
