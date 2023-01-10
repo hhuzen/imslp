@@ -49,11 +49,12 @@ my $nbghost="debijbel.nl";
 my $nbgip;
 my $nbgurl;
 my @GETheader;
-my @Template;
 
-# bookTLA#maxchapter
+#
+#  ABR:bname:bsname:maxchapter
 my @books=qw(
-GEN:Genesis:1
+GEN:Genesis:Gen:1
+EXO:Exodus:Exo:2
 );
 
 #=======================================================================#
@@ -680,9 +681,8 @@ sub cmd_nbg {
   if ( ! $bible ) { error("no bible specified"); return 1; }
   my $zefdir="zef.$bible" ;
   my $topdir=getcwd();
-  my $header="$topdir/zef.GET.header";
-  my $template="$topdir/zef.$bible.TEMPLATE.xml";
-  my $zefbible="$topdir/zef.$bible.xml";
+  my $header="$topdir/$bible.zef";
+  my $zefbible="$topdir/$bible.xml";
   if ( -f $zefbible ) { unlink $zefbible; }
 
   if ( ! -f $header ) {
@@ -690,18 +690,24 @@ sub cmd_nbg {
   } else {
     verbose( "using $header");
   }
-  if ( ! open(HEADER,$header) ) { error "cannot open $header: $!\n"; }
-  @GETheader=<HEADER>;
-  close HEADER;
 
-  if ( ! -f $template ) {
-    error("no file: $template"); return 1;
-  } else {
-    verbose( "using $template");
+  if ( ! open(HEADER,$header) ) { error "cannot open $header: $!\n"; }
+  while ( my $l = <HEADER> ) {
+    # like # biblename=
+    if ( $l =~  /^#/ ) {
+      chomp $l;
+      $l =~ s/^#\s*//g; 
+      my $k=$l; $k=~ s/\s*=.*//; 
+      my $v=$l; $v=~ s/^[^=]*=\s*//; $v=~ s/\s*$//;
+      #print "set '$k=$v' \n" ;
+      $ENV{$k}=$v;
+    } else {
+      push @GETheader, $l;
+    }
   }
-  if ( ! open(TEMPLATE,$template) ) { error "cannot open $template $!\n"; }
-  @Template=<TEMPLATE>;
-  close TEMPLATE;
+  if ( ! $ENV{biblename} ) { $ENV{biblename}="biblename not set"; }
+
+  close HEADER;
 
   if ($reset) {
     if ( -d $zefdir ) {
@@ -723,16 +729,20 @@ sub cmd_nbg {
 
   if ( ! open( XML, ">:encoding(UTF-8)","$zefbible" ) ){  error "cannot open $zefbible"; return 1; }
 
-  print XML @Template;
+  print XML qq`<?xml version="1.0" encoding="utf-8"?>
+<XMLBIBLE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="zef2005.xsd" version="2.0.1.18" status="v" biblename="$ENV{biblename}" revision="3" type="x-bible">
+`;
 
   my $booknr=0;
   for my $books (@books) {
     $booknr++;
     my $chap=0;
     my $book=$books; $book =~ s/:.*//;
-    my $bookname=$books; $bookname =~ s/^[^:]*://; $bookname=~ s/:.*//;
+    my $bname=$books; $bname =~ s/^[^:]*://; $bname=~ s/:.*//;
+    my $bsname=$books; $bsname =~ s/^[^:]*:[^:]*://; $bsname=~ s/:.*//;
+
     my $max=$books; $max =~ s/.*://;
-    print XML "  <BIBLEBOOK bnumber=\"$booknr\" bname=\"$booknr $book\" bsname=\"$booknr$book\">\n";
+    print XML "  <BIBLEBOOK bnumber=\"$booknr\" bname=\"$bname\" bsname=\"$bsname\">\n";
 
     while ( $chap < $max ) {
       $chap++;
@@ -746,7 +756,7 @@ sub cmd_nbg {
       }
       notice( "file://" . realpath($zefbook));
 
-      if ( process_file($bookname, $chap, $zefbook, $zefbible) != 0 ) { return 1;};
+      if ( process_file($chap, $zefbook) != 0 ) { return 1;};
       print XML "   </CHAPTER>\n" ;
     }
     print XML "  </BIBLEBOOK>\n";
@@ -796,7 +806,7 @@ sub doinit() {
   return 0;
 }
 sub process_file {
-  my ($bookname, $chap, $html)=@_;
+  my ($chap, $html)=@_;
   notice "process $html" ;
 
   my $xhtml="X-$html";
@@ -833,21 +843,47 @@ sub process_file {
   my $dom = XML::LibXML->load_xml(location => "$xhtml" );
 
 
+  my @dvoi=();
+  my %dvoi=();
   foreach my $passage ($dom->findnodes('//app-bible-passage')) {
       my @attrs=$passage->attributes();
       foreach my $attr (@attrs) {
         next if ( $attr !~ /^ *data-chapter-string/ );
         my $v=$attr; $v=~ s/.*="//g; $v=~ s/"//g;
       }
+      my $exp_ix=0;
       foreach my $span ($passage->findnodes('//span')) {
         my @attrs=$span->attributes();
         foreach my $attr (@attrs) {
           next if ( $attr !~ /^ *data-verse-org-id/ );
+
           my $v=$attr; $v=~ s/.*="//g; $v=~ s/"//g;
-          $v=~ s/.*\.//;
-          print XML "<VERS vnumber=\"$v\">". $span->to_literal()."</VERS>\n";
+          if ( ! $dvoi{$v} ) {
+            $exp_ix++;
+            my $vv=$v;
+            $vv=~ s/.*\.//;
+            if ( $exp_ix != $vv ) {
+                print "OEPS: $vv while expecting $exp_ix ($attr)\n" ;
+            }
+            push @dvoi,$v;
+            my @o=();
+            $dvoi{$v}=\@o;
+          }
+          my $p=$dvoi{$v};
+          push @$p, $span->to_literal(); 
         }
       }
+  }
+  for my $v (@dvoi) {
+    my $p = $dvoi{$v};
+    $v=~ s/.*\.//;
+    print XML "<VERS vnumber=\"$v\">";
+    my $sep="";
+    for my $l (@$p) {
+      print XML "$sep$l";
+      $sep=" ";
+    }
+    print XML "</VERS>\n";
   }
 }
 
