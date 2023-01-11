@@ -48,14 +48,7 @@ my $TAG="*zef*";
 my $nbghost="debijbel.nl";
 my $nbgip;
 my $nbgurl;
-my @GETheader;
 
-#
-#  ABR:bname:bsname:maxchapter
-my @books=qw(
-GEN:Genesis:Gen:1
-EXO:Exodus:Exo:2
-);
 
 #=======================================================================#
 #==gutspl=CHECKSUM=29149
@@ -654,7 +647,9 @@ sub cmd_help {
 # zef nbg <bible>
 #    extracts the <bible>
 #
-#    The zef.GET.header file can be created by 
+#    Requires a zef.spec file.
+#
+#    The zef.spec header be created by 
 #    - in een browser, access https://debijbel.nl/bijbel/BGT/
 #    - in browser webdevelopment tools, find the GET request, copy the request header
 #
@@ -662,10 +657,23 @@ sub cmd_help {
 #    zef nbg NBV
 #---
 #-------------------------------------------------------------------------#
+
+# zef.spec vars
+my $BIBLE;
+my $BIBLENAME;
+#  ABR:bname:bsname:maxchapter
+my @BIBLEBOOK;
+my @GETHEADER;
+
+my %BIBLE2BOOKS;          # BIBLE -> @BOOKS
+my %BOOK2CHAPTERS;       # BIBLE.BOOK -> @CHAPTERS
+my %VALID;
+my $zefbible;
+
 sub cmd_nbg {
   my @args=@_;
   my $reset=0;
-  my $bible;
+  my @targets=();
 
   while ($args[0] =~ /^-/) {
     if ( $args[0] eq "-reset" ) {
@@ -676,52 +684,45 @@ sub cmd_nbg {
       return 1;
     }
   }
-  if ( $args[0] ) { $bible=$args[0]; shift @args; }
-  if ( $args[0] ) { error("unknown option: $args[0]" ); return 1; }
-  if ( ! $bible ) { error("no bible specified"); return 1; }
-  my $zefdir="zef.$bible" ;
+  @targets=@args;
+
+  if ( doZefSpec() != 0 ) { return 1; };
+
   my $topdir=getcwd();
-  my $header="$topdir/$bible.zef";
-  my $zefbible="$topdir/$bible.xml";
-  if ( -f $zefbible ) { unlink $zefbible; }
-
-  if ( ! -f $header ) {
-    error("no file: $header"); return 1;
-  } else {
-    verbose( "using $header");
-  }
-
-  if ( ! open(HEADER,$header) ) { error "cannot open $header: $!\n"; }
-  while ( my $l = <HEADER> ) {
-    # like # biblename=
-    if ( $l =~  /^#/ ) {
-      chomp $l;
-      $l =~ s/^#\s*//g; 
-      my $k=$l; $k=~ s/\s*=.*//; 
-      my $v=$l; $v=~ s/^[^=]*=\s*//; $v=~ s/\s*$//;
-      #print "set '$k=$v' \n" ;
-      $ENV{$k}=$v;
-    } else {
-      push @GETheader, $l;
-    }
-  }
-  if ( ! $ENV{biblename} ) { $ENV{biblename}="biblename not set"; }
-
-  close HEADER;
+  my $zefdir="$topdir/$BIBLE";
+  $zefbible="$topdir/$BIBLE.xml";
+  if ( @targets == 0 ) { 
+    push @targets, $BIBLE;
+  };
 
   if ($reset) {
-    if ( -d $zefdir ) {
-      rmtree($zefdir) || return 1; 
-    }
+    if ( -f $zefbible ) { unlink $zefbible; }
+    if ( -d $zefdir ) { rmtree($zefdir) || return 1; }
   }
-  if ( ! -d $zefdir ) {
-    mkdir($zefdir) || return 1;
-  }
+  if ( ! -d $zefdir ) { mkdir($zefdir) || return 1; }
   chdir($zefdir) || return 1;
   notice "in $zefdir";
-  
+
   my $rval=0;
-  notice ("get bible: $bible -> $zefbible");
+  for my $target (@targets) {
+    if ( ! $VALID{$target} ) { error( "target=$target is unknown" ); }
+    my $valid=$VALID{$target};
+    if ( $valid eq "chapter" ) { 
+      $rval=zef_build_chapter( $target ); 
+    } elsif ( $valid eq "book" ) { 
+      $rval=zef_build_book( $target ); 
+    } elsif ( $valid eq "bible" ) { 
+      $rval=zef_build_bible( $target ); 
+    }
+    if ($rval != 0 ) { return 1; }
+  }
+  return 0;
+}
+
+
+sub what() {
+  my $rval=0;
+  notice ("get bible: $BIBLE -> $zefbible");
   if ( -f $zefbible ) {
     notice "Zefania bible: $zefbible already exists";
     return 0;
@@ -733,6 +734,7 @@ sub cmd_nbg {
 <XMLBIBLE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="zef2005.xsd" version="2.0.1.18" status="v" biblename="$ENV{biblename}" revision="3" type="x-bible">
 `;
 
+my @books;
   my $booknr=0;
   for my $books (@books) {
     $booknr++;
@@ -748,11 +750,11 @@ sub cmd_nbg {
       $chap++;
       print XML "   <CHAPTER cnumber=\"$chap\">\n" ;
 
-      my $zefbook="$bible.$book.$chap.html";
+      my $zefbook="$BIBLE.$book.$chap.html";
       if ( -f $zefbook ) {
         notice "$zefbook already exists" ;
       } else {
-        wget_cmd ( "$nbgurl/bijbel/$bible/$book.$chap", "$zefbook"  );
+        wget_cmd ( "$nbgurl/bijbel/$BIBLE/$book.$chap", "$zefbook"  );
       }
       notice( "file://" . realpath($zefbook));
 
@@ -772,13 +774,79 @@ sub cmd_nbg {
   return $rval;
 }
 
+sub doZefSpec() {
+  my $zefspec="zef.spec" ;
+
+  if ( ! -f $zefspec ) {
+    error("no file: $zefspec"); return 1;
+  } else {
+    verbose( "using $zefspec");
+  }
+
+  if ( ! open(SPEC,$zefspec) ) { error "cannot open $zefspec $!\n"; }
+  while ( my $l = <SPEC> ) {
+    # like # BIBLE=
+    # like # BIBLENAME=
+    if ( $l =~  /^##/ ) { next; }
+    if ( $l =~  /^#/ ) {
+      chomp $l;
+      $l =~ s/^#\s*//g; 
+      my $k=$l; $k=~ s/\s*=.*//; 
+      my $v=$l; $v=~ s/^[^=]*=\s*//; $v=~ s/\s*$//;
+      $ENV{$k}=$v;
+      if ( $k eq "BIBLE" ) { $BIBLE=$v; }
+      elsif ( $k eq "BIBLENAME" ) { $BIBLENAME=$v; }
+      elsif ( $k eq "BIBLEBOOK" ) { push @BIBLEBOOK,$v; }
+      else { error(" huh? $k ? "); return 1; };
+    } else {
+      push @GETHEADER, $l;
+    }
+  }
+  close SPEC;
+  my $rval=0;
+  for my $v (qw( BIBLE BIBLENAME)) {
+    if ( ! defined $ENV{$v} ) { error( "in $zefspec: $v not set" ); $rval=1; }
+  }
+  if ( @BIBLEBOOK == 0 ) { error( "in $zefspec: no BIBLEBOOK" ); $rval=1; }
+  # parse BIBLEBOOK
+  
+  $VALID{$BIBLE}="bible";
+  if ( ! $BIBLE2BOOKS{$BIBLE} ) {
+    my @o; $BIBLE2BOOKS{$BIBLE}=\@o;
+  }
+  my $pbible2books=$BIBLE2BOOKS{$BIBLE};
+  
+  for my $BOOK (@BIBLEBOOK) {
+        my ($ABR,$BNAME,$BSNAME,$MAX) = split(/:/,$BOOK);
+        my $book="$BIBLE.$ABR"; 
+        $VALID{$book}="book";
+        push @$pbible2books, "$book";
+
+        if ( ! $BOOK2CHAPTERS{$book} ) {
+          my @o; $BOOK2CHAPTERS{$book}=\@o;
+        }
+        my $pbook2chapters=$BOOK2CHAPTERS{$book};
+        for ( my $ix=1; $ix <= $MAX; $ix++ ) {
+           my $chapter="$BIBLE.$ABR.$ix";    
+           $VALID{$chapter}="chapter";
+           push @$pbook2chapters, "$chapter";    # order
+        }
+  }
+
+  print "\%BIBLE2BOOKS: " . Dumper( \%BIBLE2BOOKS ) . "\n";
+  print "\%BOOK2CHAPTERS " . Dumper( \%BOOK2CHAPTERS ) . "\n";
+  print "\%VALID " . Dumper( \%VALID ) . "\n";
+
+  return $rval;
+}
+
 sub wget_cmd {
   my ($url,$ofile)=@_;
 
   my $cmd;
   $cmd="wget --no-check-certificate -O $ofile" ;
   $cmd.=" --compression=gzip" ;
-  for my $h (@GETheader) {
+  for my $h (@GETHEADER) {
     if ($h =~ /^GET/) { next; }
     chomp $h;
     if ($h =~ /^$/) { next; }
