@@ -664,6 +664,7 @@ my $BIBLE;
 my $BIBLENAME;
 #  ABR:bname:bsname:maxchapter
 my @BIBLEBOOK;
+my %BIBLEBOOK;
 my @GETHEADER;
 
 my %BIBLE2BOOKS;          # BIBLE -> @BOOKS
@@ -736,92 +737,86 @@ sub  zef_build_chapter {
   }
   notice( "file://" . realpath($nbg));
 
-  my $chap=$target;
-  $chap=~  s/^[^\.]*\.[^\.]*\.//g;
-  if ( process_file($chap, $nbg) != 0 ) { return 1;};
+  my $xxml="$targetdir/$target.xml";
+  if ( -f $xxml ) {
+        notice "$xxml already exists" ;
+  } else {
+        my $xnbg="$targetdir/X-$target.html";
+        my $chap=$target;
+        $chap=~  s/^[^\.]*\.[^\.]*\.//g;
+        if ( mkxml($chap, $nbg,$xnbg, $xxml) != 0 ) { return 1;};
+  }
   return $rval;
 }
 sub  zef_build_book {
   my $target=shift;
   my $rval=0;
+  my $targetdir=$target;
+  $targetdir =~ s/\./\//g;
+  if ( ! -d $targetdir ) { mkpath($targetdir) || return 1; }
   notice "    $target : book";
-  my $pchapters=%BOOK2CHAPTERS{$target};
+  my $pchapters=$BOOK2CHAPTERS{$target};
   for my $chapter (@$pchapters ) {
       $rval=zef_build_chapter( $chapter ); 
       if ($rval != 0 ) { return 1; }
   }
+  my $BOOK=$BIBLEBOOK{$target};
+  my ($ABR,$BNAME,$BSNAME,$MAX,$BNUMBER) = split(/:/,$BOOK);
+
+  my $xml="$targetdir/$target.xml";
+  if ( ! open( XML, ">:encoding(UTF-8)","$xml" ) ){  error "cannot open $xml"; return 1; }
+    print XML "  <BIBLEBOOK bnumber=\"$BNUMBER\" bname=\"$BNAME\" bsname=\"$BSNAME\">\n";
+    for my $chapter (@$pchapters ) {
+      my $chxml="$targetdir/$chapter.xml" ;
+      if ( ! open( CHXML, $chxml )) { 
+        error "cannot read $chxml"; 
+      } else {
+        my @ch=<CHXML>;
+        close CHXML;
+        print XML @ch;
+      }
+    }
+    print XML "  </BIBLEBOOK>\n";
+  close XML;
   return $rval;
 }
 sub  zef_build_bible {
   my $target=shift;
   my $rval=0;
+  my $targetdir=$target;
+  $targetdir =~ s/\./\//g;
+  if ( ! -d $targetdir ) { mkpath($targetdir) || return 1; }
   notice "  $target : bible";
   #build books
-  my $pbooks=%BIBLE2BOOKS{$target};
+  my $pbooks=$BIBLE2BOOKS{$target};
   for my $book (@$pbooks ) {
       $rval=zef_build_book( $book ); 
       if ($rval != 0 ) { return 1; }
   }
   #build xml
-  return $rval;
-}
-
-
-
-
-sub what() {
-  my $rval=0;
-  notice ("get bible: $BIBLE -> $zefbible");
-  if ( -f $zefbible ) {
-    notice "Zefania bible: $zefbible already exists";
-    return 0;
-  }
-
-  if ( ! open( XML, ">:encoding(UTF-8)","$zefbible" ) ){  error "cannot open $zefbible"; return 1; }
-
-  print XML qq`<?xml version="1.0" encoding="utf-8"?>
-<XMLBIBLE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="zef2005.xsd" version="2.0.1.18" status="v" biblename="$ENV{biblename}" revision="3" type="x-bible">
+  my $xml="$targetdir/$target.xml";
+  if ( ! open( XML, ">:encoding(UTF-8)","$xml" ) ){  error "cannot open $xml"; return 1; }
+    print XML qq`<?xml version="1.0" encoding="utf-8"?>
+<XMLBIBLE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="zef2005.xsd" version="2.0.1.18" status="v" biblename="$BIBLENAME" revision="3" type="x-bible">
 `;
 
-my @books;
-  my $booknr=0;
-  for my $books (@books) {
-    $booknr++;
-    my $chap=0;
-    my $book=$books; $book =~ s/:.*//;
-    my $bname=$books; $bname =~ s/^[^:]*://; $bname=~ s/:.*//;
-    my $bsname=$books; $bsname =~ s/^[^:]*:[^:]*://; $bsname=~ s/:.*//;
-
-    my $max=$books; $max =~ s/.*://;
-    print XML "  <BIBLEBOOK bnumber=\"$booknr\" bname=\"$bname\" bsname=\"$bsname\">\n";
-
-    while ( $chap < $max ) {
-      $chap++;
-      print XML "   <CHAPTER cnumber=\"$chap\">\n" ;
-
-      my $zefbook="$BIBLE.$book.$chap.html";
-      if ( -f $zefbook ) {
-        notice "$zefbook already exists" ;
+    for my $book (@$pbooks ) {
+      my $bookdir=$book;
+      $bookdir =~ s/\./\//g;
+      my $chxml="$bookdir/$book.xml" ;
+      if ( ! open( CHXML, $chxml )) { 
+        error "cannot read $chxml"; 
       } else {
-        wget_cmd ( "$nbgurl/bijbel/$BIBLE/$book.$chap", "$zefbook"  );
+        my @ch=<CHXML>;
+        close CHXML;
+        print XML @ch;
       }
-      notice( "file://" . realpath($zefbook));
-
-      if ( process_file($chap, $zefbook) != 0 ) { return 1;};
-      print XML "   </CHAPTER>\n" ;
     }
-    print XML "  </BIBLEBOOK>\n";
-  }
   print XML "</XMLBIBLE>\n";
   close XML;
-  
-  if ( -f $zefbible ) {
-    print "${C_OK}OK${C_NORM}\n" ;
-  } else {
-    print "${C_NOK}NOT OK${C_NORM}\n" ;
-  }
   return $rval;
 }
+
 
 sub doZefSpec() {
   my $zefspec="zef.spec" ;
@@ -864,12 +859,15 @@ sub doZefSpec() {
     my @o; $BIBLE2BOOKS{$BIBLE}=\@o;
   }
   my $pbible2books=$BIBLE2BOOKS{$BIBLE};
-  
+
+  my $BNUMBER=0; 
   for my $BOOK (@BIBLEBOOK) {
         my ($ABR,$BNAME,$BSNAME,$MAX) = split(/:/,$BOOK);
         my $book="$BIBLE.$ABR"; 
         $VALID{$book}="book";
         push @$pbible2books, "$book";
+        $BNUMBER++;
+        $BIBLEBOOK{$BIBLE.".".$ABR}=$BOOK.":".$BNUMBER;
 
         if ( ! $BOOK2CHAPTERS{$book} ) {
           my @o; $BOOK2CHAPTERS{$book}=\@o;
@@ -882,6 +880,7 @@ sub doZefSpec() {
         }
   }
 
+  print "\%BIBLEBOOK " . Dumper( \%BIBLEBOOK ) . "\n";
   print "\%BIBLE2BOOKS: " . Dumper( \%BIBLE2BOOKS ) . "\n";
   print "\%BOOK2CHAPTERS " . Dumper( \%BOOK2CHAPTERS ) . "\n";
   print "\%VALID " . Dumper( \%VALID ) . "\n";
@@ -917,16 +916,15 @@ sub doinit() {
   my $cmd="nslookup $nbghost | grep ^Address | awk '{print \$2}' | grep -v -e \"#\" -e :";
   verbose "$cmd" ;
   $nbgip=`$cmd`;
-  if ( ! $nbgip ) { error("cannot get ip for $nbghost"); doexit(1);}
+  if ( ! $nbgip ) { warning("cannot get ip for $nbghost - set to 0.0.0.0"); $nbgip="0.0.0.0"; }
   $nbgip =~ s/[\r\n]//g;
   $nbgurl="https://$nbgip";
   return 0;
 }
-sub process_file {
-  my ($chap, $html)=@_;
-  notice "process $html" ;
+sub mkxml {
+  my ($chap, $html, $xhtml,$xxml)=@_;
+  notice "build $xxml" ;
 
-  my $xhtml= dirname($html)."/X-".basename($html);
   if ( ! -f $xhtml ) {
     if ( ! open( HTML, "$html" ) ){  error "cannot open $html"; return 1; }
     if ( ! open( XHTML, ">$xhtml" ) ){  error "cannot open $xhtml"; return 1; }
@@ -957,12 +955,11 @@ sub process_file {
     close XHTML;
   }
 
-  my $dom = XML::LibXML->load_xml(location => "$xhtml" );
-
-
-  my @dvoi=();
-  my %dvoi=();
-  foreach my $passage ($dom->findnodes('//app-bible-passage')) {
+  if ( ! -f $xxml ) {
+    my $dom = XML::LibXML->load_xml(location => "$xhtml" );
+    my @dvoi=();
+    my %dvoi=();
+    foreach my $passage ($dom->findnodes('//app-bible-passage')) {
       my @attrs=$passage->attributes();
       foreach my $attr (@attrs) {
         next if ( $attr !~ /^ *data-chapter-string/ );
@@ -981,6 +978,16 @@ sub process_file {
             $vv=~ s/.*\.//;
             if ( $exp_ix != $vv ) {
                 print "OEPS: $vv while expecting $exp_ix ($attr)\n" ;
+                while ( $exp_ix != $vv ) {
+                  print "  insert dummy $exp_ix\n" ;
+                  my $xv=$v;
+                  $xv=~ s/[^\.]*$//;
+                  $xv.=$exp_ix;
+                  push @dvoi,$xv;
+                  my @o=();
+                  $dvoi{$xv}=\@o;
+                  $exp_ix++;
+                }
             }
             push @dvoi,$v;
             my @o=();
@@ -990,20 +997,25 @@ sub process_file {
           push @$p, $span->to_literal(); 
         }
       }
-  }
-  for my $v (@dvoi) {
-    my $p = $dvoi{$v};
-    $v=~ s/.*\.//;
-    print XML "<VERS vnumber=\"$v\">";
-    my $sep="";
-    for my $l (@$p) {
-      print XML "$sep$l";
-      $sep=" ";
     }
-    print XML "</VERS>\n";
+    if ( ! open( XML, ">:encoding(UTF-8)","$xxml" ) ){  error "cannot open $xxml"; return 1; }
+    print XML "   <CHAPTER cnumber=\"$chap\">\n" ;
+    for my $v (@dvoi) {
+      my $p = $dvoi{$v};
+      $v=~ s/.*\.//;
+      print XML "    <VERS vnumber=\"$v\">";
+      my $sep="";
+      for my $l (@$p) {
+        print XML "$sep$l";
+        $sep=" ";
+      }
+      print XML "</VERS>\n";
+    }
+    print XML "   </CHAPTER>\n" ;
+    close XML;
   }
+  return 0;
 }
-
 
 sub doexit($) {
   exit(1);
