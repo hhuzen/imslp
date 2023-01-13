@@ -62,6 +62,7 @@ use Term::ANSIColor;
 use Cwd 'realpath';
 use Cwd;
 use File::Basename;
+use File::Path;
 use Sys::Hostname;
 use JSON::PP;
 use Data::Dumper;
@@ -697,16 +698,14 @@ sub cmd_nbg {
 
   if ($reset) {
     if ( -f $zefbible ) { unlink $zefbible; }
-    if ( -d $zefdir ) { rmtree($zefdir) || return 1; }
+    if ( -d $zefdir ) { rmtree($zefdir) || return 1; }   # clean top
   }
-  if ( ! -d $zefdir ) { mkdir($zefdir) || return 1; }
-  chdir($zefdir) || return 1;
-  notice "in $zefdir";
 
   my $rval=0;
   for my $target (@targets) {
     if ( ! $VALID{$target} ) { error( "target=$target is unknown" ); }
     my $valid=$VALID{$target};
+    notice "building $target in " . getcwd();
     if ( $valid eq "chapter" ) { 
       $rval=zef_build_chapter( $target ); 
     } elsif ( $valid eq "book" ) { 
@@ -715,9 +714,59 @@ sub cmd_nbg {
       $rval=zef_build_bible( $target ); 
     }
     if ($rval != 0 ) { return 1; }
+    chdir($topdir) || return 1;
   }
   return 0;
 }
+
+sub  zef_build_chapter {
+  my $target=shift;
+  my $targetdir=$target;
+  $targetdir =~ s/\.[^\.]*$//;   # strip chapternr
+  $targetdir =~ s/\./\//g;
+  if ( ! -d $targetdir ) { mkpath($targetdir) || return 1; }
+  my $rval=0;
+  notice "      $target : chapter";
+  my $nbg="$targetdir/$target.html";
+  if ( -f $nbg ) {
+        notice "$nbg already exists" ;
+  } else {
+        my $x=$target; $x=~ s/\./\//; # only first
+        wget_cmd ( "$nbgurl/bijbel/$x", "$nbg"  );
+  }
+  notice( "file://" . realpath($nbg));
+
+  my $chap=$target;
+  $chap=~  s/^[^\.]*\.[^\.]*\.//g;
+  if ( process_file($chap, $nbg) != 0 ) { return 1;};
+  return $rval;
+}
+sub  zef_build_book {
+  my $target=shift;
+  my $rval=0;
+  notice "    $target : book";
+  my $pchapters=%BOOK2CHAPTERS{$target};
+  for my $chapter (@$pchapters ) {
+      $rval=zef_build_chapter( $chapter ); 
+      if ($rval != 0 ) { return 1; }
+  }
+  return $rval;
+}
+sub  zef_build_bible {
+  my $target=shift;
+  my $rval=0;
+  notice "  $target : bible";
+  #build books
+  my $pbooks=%BIBLE2BOOKS{$target};
+  for my $book (@$pbooks ) {
+      $rval=zef_build_book( $book ); 
+      if ($rval != 0 ) { return 1; }
+  }
+  #build xml
+  return $rval;
+}
+
+
 
 
 sub what() {
@@ -842,7 +891,7 @@ sub doZefSpec() {
 
 sub wget_cmd {
   my ($url,$ofile)=@_;
-
+  verbose "$url" ;
   my $cmd;
   $cmd="wget --no-check-certificate -O $ofile" ;
   $cmd.=" --compression=gzip" ;
@@ -877,7 +926,7 @@ sub process_file {
   my ($chap, $html)=@_;
   notice "process $html" ;
 
-  my $xhtml="X-$html";
+  my $xhtml= dirname($html)."/X-".basename($html);
   if ( ! -f $xhtml ) {
     if ( ! open( HTML, "$html" ) ){  error "cannot open $html"; return 1; }
     if ( ! open( XHTML, ">$xhtml" ) ){  error "cannot open $xhtml"; return 1; }
