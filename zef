@@ -697,7 +697,6 @@ sub cmd_nbg {
     push @targets, $BIBLE;
   };
 
-  print " HH $reset\n" ;
   if ($reset >= 2) { my $cmd="rm -rf $zefdir"; warning ($cmd); system($cmd); } 
   if ($reset == 1) { my $cmd="find $zefdir -type f | grep -e .xml -e /X- | xargs rm"; 
                         warning ($cmd); system($cmd); } 
@@ -922,12 +921,12 @@ sub doinit() {
   return 0;
 }
 sub mkxml {
-  my ($chap, $html, $xhtml,$xxml)=@_;
+  my ($chap, $nbg, $xnbg,$xxml)=@_;
   notice "build $xxml" ;
 
-  if ( ! -f $xhtml ) {
-    if ( ! open( HTML, "<:encoding(UTF-8)", "$html" ) ){  error "cannot open $html"; return 1; }
-    if ( ! open( XHTML, ">:encoding(UTF-8)", "$xhtml" ) ){  error "cannot open $xhtml"; return 1; }
+  if ( ! -f $xnbg ) {
+    if ( ! open( HTML, "<:encoding(UTF-8)", "$nbg" ) ){  error "cannot open $nbg"; return 1; }
+    if ( ! open( XHTML, ">:encoding(UTF-8)", "$xnbg" ) ){  error "cannot open $xnbg"; return 1; }
 
     my $stage=0;
     my $nextstage=0;
@@ -946,6 +945,9 @@ sub mkxml {
         }
       }
       if ($stage == 1) {
+        $line =~ s/<[\/]*br.[^>]*>//g;           # formatting issue in nbg site
+        $line =~ s/<!---->//g;
+        $line =~ s/&nbsp;/ /g;
         print XHTML $line;
         $stage=$nextstage;
       }
@@ -956,7 +958,7 @@ sub mkxml {
   }
 
   if ( ! -f $xxml ) {
-    my $dom = XML::LibXML->load_xml(location => "$xhtml" );
+    my $dom = XML::LibXML->load_xml(location => "$xnbg" );
     my @dvoi=();
     my %dvoi=();
     foreach my $passage ($dom->findnodes('//app-bible-passage')) {
