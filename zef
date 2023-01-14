@@ -678,8 +678,8 @@ sub cmd_nbg {
   my @targets=();
 
   while ($args[0] =~ /^-/) {
-    if ( $args[0] eq "-reset" ) {
-        $reset=1;
+    if ( $args[0] eq "-reset" || $args[0] eq "-r" ) {
+        $reset++;
         shift @args;
     } else {
       error("unknown option: $args[0]");
@@ -697,10 +697,10 @@ sub cmd_nbg {
     push @targets, $BIBLE;
   };
 
-  if ($reset) {
-    if ( -f $zefbible ) { unlink $zefbible; }
-    if ( -d $zefdir ) { rmtree($zefdir) || return 1; }   # clean top
-  }
+  print " HH $reset\n" ;
+  if ($reset >= 2) { my $cmd="rm -rf $zefdir"; warning ($cmd); system($cmd); } 
+  if ($reset == 1) { my $cmd="find $zefdir -type f | grep -e .xml -e /X- | xargs rm"; 
+                        warning ($cmd); system($cmd); } 
 
   my $rval=0;
   for my $target (@targets) {
@@ -768,7 +768,7 @@ sub  zef_build_book {
     print XML "  <BIBLEBOOK bnumber=\"$BNUMBER\" bname=\"$BNAME\" bsname=\"$BSNAME\">\n";
     for my $chapter (@$pchapters ) {
       my $chxml="$targetdir/$chapter.xml" ;
-      if ( ! open( CHXML, $chxml )) { 
+      if ( ! open( CHXML, "<:encoding(UTF-8)", $chxml )) { 
         error "cannot read $chxml"; 
       } else {
         my @ch=<CHXML>;
@@ -804,7 +804,7 @@ sub  zef_build_bible {
       my $bookdir=$book;
       $bookdir =~ s/\./\//g;
       my $chxml="$bookdir/$book.xml" ;
-      if ( ! open( CHXML, $chxml )) { 
+      if ( ! open( CHXML, "<:encoding(UTF-8)", $chxml )) { 
         error "cannot read $chxml"; 
       } else {
         my @ch=<CHXML>;
@@ -926,8 +926,8 @@ sub mkxml {
   notice "build $xxml" ;
 
   if ( ! -f $xhtml ) {
-    if ( ! open( HTML, "$html" ) ){  error "cannot open $html"; return 1; }
-    if ( ! open( XHTML, ">$xhtml" ) ){  error "cannot open $xhtml"; return 1; }
+    if ( ! open( HTML, "<:encoding(UTF-8)", "$html" ) ){  error "cannot open $html"; return 1; }
+    if ( ! open( XHTML, ">:encoding(UTF-8)", "$xhtml" ) ){  error "cannot open $xhtml"; return 1; }
 
     my $stage=0;
     my $nextstage=0;
